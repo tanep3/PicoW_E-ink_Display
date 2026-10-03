@@ -1,6 +1,6 @@
-# ローカル実行・導入前の手順
+# ローカル運用手順
 
-この文書は運用手順です。HTTP user serviceは `192.168.0.120:16150` で起動・有効化済みです。後続のユーザー承認で毎時生成timerを有効化し、Pico新 `main.py` に切り替えました。詳細は[転送記録](PICO_TRANSFER.md)を参照してください。
+この文書は現在のコードに基づく運用手順です。HTTP user serviceは `192.168.0.120:16150` で起動・有効化済みです。毎時生成timerを有効化し、Pico新 `main.py` に切り替えました。実装前の設計との差分は[実装仕様](IMPLEMENTED_SPEC.md)、転送の履歴は[転送記録](PICO_TRANSFER.md)を参照してください。
 
 ## 依存と単体テスト
 
@@ -22,13 +22,13 @@ python3 -m unittest discover -s tests -v
 
 `python3 -m ai_news.server` は保存済み画像だけを配信します。GETで生成はしません。配信 `/v1/latest`、不変RAW/PNG、status、閲覧画面 `/` と `/gallery/` は同じ設定ポートです。閲覧とPico取得に追加のアプリ認証はありません。
 
-user unitテンプレートは `systemd/` にあります。HTTP serviceと生成timerはこのraspi5の開発パスと状態ディレクトリで導入済みです。`systemctl --user status ai-news-http.service ai-news-generate.timer` と `systemctl --user list-timers ai-news-generate.timer` で状態を確認できます。生成サービスは25分の起動期限、各UTC時間スロットの冪等処理、排他ロックを備えます。
+user unitテンプレートは `systemd/` にあります。HTTP serviceと生成timerはこのraspi5の開発パスと状態ディレクトリで導入済みです。`systemctl --user status ai-news-http.service ai-news-generate.timer` と `systemctl --user list-timers ai-news-generate.timer` で状態を確認できます。timerは毎時00分、`Persistent=false` です。生成サービスは25分の起動期限、各UTC時間スロットの冪等処理、排他ロックを備えます。実際の定時結果は `journalctl --user -u ai-news-generate.service` と `state/jobs.sqlite3` で確認します。
 
 ## Pico
 
 `pico/config.py` のHOST/PORTは母艦と一致させます。`pico/secrets.example.py` の空欄はWi-Fi SSIDとパスワードの2項目だけです。ユーザー設定済みのローカル `pico/secrets.py` は上書きしません。本人が本体へ転送し、秘密値を表示せずWi-Fiと母艦HTTPの疎通を確認しました。新 `main.py` で正規RAWを取得・描画し、ユーザーが実画面で確認しました。旧版は本体内 `main_legacy.py` と非公開バックアップに残しています。
 
-Pico W/Pico 2 Wの機種・firmware版、SPI1 SCK GP10/MOSI GP11とRST12/DC8/CS9/BUSY13の導通を確認してください。通常full更新のみ実装しています。四隅、外周、非対称矢印で回転・極性・paddingを実機確認するまで表示成立とはしません。BUSY期限、無線停止、時限wake、電流、モバイルバッテリー停止時のPC USB給電も実測します。
+Pico上で確認したMicroPythonはv1.22.1です。SPI1とRST12/DC8/CS9/BUSY13の既存V4表示経路で本番画像が表示されました。通常full更新のみ実装しています。SCK/MOSIの導通、四隅・外周・非対称矢印による画面全域の回転・極性・padding、連続wake、電流、モバイルバッテリー停止時のPC USB給電は引き続き実測します。パネルBUSYには60秒のコード上の期限があります。
 
 ## 障害と復旧
 
