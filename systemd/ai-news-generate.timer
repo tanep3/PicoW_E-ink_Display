@@ -1,0 +1,10 @@
+[Unit]
+Description=Hourly AI news satire generation
+
+[Timer]
+OnCalendar=hourly
+Persistent=false
+Unit=ai-news-generate.service
+
+[Install]
+WantedBy=timers.target

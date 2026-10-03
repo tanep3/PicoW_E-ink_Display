@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AIニュース風刺画アーカイブ</title>
+<style>
+:root{font-family:system-ui,sans-serif;color:#222;background:#f7f6f2}*{box-sizing:border-box}
+body{max-width:1100px;margin:auto;padding:1rem}h1{font-size:clamp(1.4rem,4vw,2rem)}
+button{background:white;border:1px solid #767a72;border-radius:.3rem;padding:.4rem;color:inherit;cursor:pointer}
+button:focus-visible,a:focus-visible{outline:3px solid #1761ad}
+.toolbar{display:flex;align-items:center;gap:1rem;margin:1rem 0}.toolbar strong{min-width:8em;text-align:center}
+.week,.calendar{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:.3rem}.week span{text-align:center;font-weight:bold}
+.day{min-height:125px;text-align:left;display:flex;flex-direction:column;gap:.2rem}.day.empty{border:0;background:transparent}
+.day img{width:100%;max-width:250px;aspect-ratio:250/122;object-fit:contain;image-rendering:pixelated}.day small{color:#495347}
+.entries{display:grid;gap:1rem;margin:1rem 0}.entry{background:white;border:1px solid #ccc;border-radius:.5rem;padding:1rem}
+.entry img{width:min(100%,750px);aspect-ratio:250/122;object-fit:contain;image-rendering:pixelated;border:1px solid #ddd}
+.entry time{display:block;margin:.4rem 0}.entry a{overflow-wrap:anywhere}.hidden{display:none}#message{min-height:1.5em}
+@media(max-width:650px){.calendar{gap:.1rem}.day{min-height:86px;overflow:hidden}.day img{display:block;width:100%;max-height:28px}.day small{font-size:.65rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+</style></head><body>
+<h1>AIニュース風刺画アーカイブ</h1><p>日本時間の日付から、保存された風刺画を探せます。<strong>「検証用」と表示された画像は表示確認用で、正規の最新版には含まれません。</strong></p>
+<nav class="toolbar" aria-label="月の移動"><button id="prev" type="button">前の月</button><strong id="month"></strong><button id="next" type="button">次の月</button></nav>
+<p id="message" role="status"></p><div class="week" aria-hidden="true"><span>日</span><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span>土</span></div>
+<div id="calendar" class="calendar" aria-label="月間カレンダー"></div>
+<section id="detail" class="hidden" aria-live="polite"><h2 id="day-heading"></h2><div id="entries" class="entries"></div></section>
+<script>
+"use strict";
+const $=s=>document.querySelector(s),pad=n=>String(n).padStart(2,"0");
+let now=new Date(),year=Number(new Intl.DateTimeFormat("en-US",{timeZone:"Asia/Tokyo",year:"numeric"}).format(now));
+let month=Number(new Intl.DateTimeFormat("en-US",{timeZone:"Asia/Tokyo",month:"numeric"}).format(now));
+async function get(path){const r=await fetch(path,{credentials:"same-origin",cache:"no-store"});if(!r.ok)throw Error("取得できませんでした ("+r.status+")");return r.json()}
+async function showMonth(){const key=year+"-"+pad(month);$("#month").textContent=year+"年"+month+"月";$("#calendar").replaceChildren();$("#detail").classList.add("hidden");$("#message").textContent="読込中…";
+ try{const data=await get("/gallery/api/month?month="+key),map=new Map(data.days.map(x=>[x.date,x]));
+ const first=new Date(Date.UTC(year,month-1,1)).getUTCDay(),count=new Date(Date.UTC(year,month,0)).getUTCDate();
+ for(let i=0;i<first;i++){const d=document.createElement("div");d.className="day empty";$("#calendar").append(d)}
+ for(let n=1;n<=count;n++){const day=key+"-"+pad(n),item=map.get(day),cell=document.createElement("button");cell.type="button";cell.className="day";cell.setAttribute("aria-label",day+" "+(item?item.count+"枚":"画像なし"));
+ const num=document.createElement("strong");num.textContent=n;cell.append(num);if(item){const img=document.createElement("img");img.src=item.thumbnail_url;img.alt="";img.loading="lazy";cell.append(img);const small=document.createElement("small");small.textContent=item.count+"枚 · "+(item.title||"");cell.append(small)}
+ cell.addEventListener("click",()=>showDay(day));$("#calendar").append(cell)}
+ $("#message").textContent=data.days.length?"日付を選ぶと、時刻順に画像を表示します。":"この月の画像はありません。"}catch(e){$("#message").textContent=e.message}}
+async function showDay(day){$("#detail").classList.remove("hidden");$("#day-heading").textContent=day+" の画像";$("#entries").replaceChildren();
+ try{const data=await get("/gallery/api/day?date="+day);if(!data.images.length)$("#entries").textContent="この日の画像はありません。";
+ for(const item of data.images){const card=document.createElement("article");card.className="entry";const h=document.createElement("h3");h.textContent=item.title;card.append(h);if(item.is_demo){const label=document.createElement("strong");label.textContent="検証用・本番未公開";card.append(label)}
+ const t=document.createElement("time");t.dateTime=item.jst_at;t.textContent="生成: "+item.jst_at.replace("T"," ").slice(0,19)+" JST";card.append(t);
+ const img=document.createElement("img");img.src=item.image_url;img.alt=item.title;img.loading="lazy";card.append(img);
+ const p=document.createElement("p");if(item.source_urls.length){p.append("出典: ");for(const url of item.source_urls){const a=document.createElement("a");a.href=url;a.target="_blank";a.rel="noopener noreferrer";a.textContent=url;p.append(a,document.createTextNode(" "))}}else p.textContent="出典: 未登録";
+ card.append(p);$("#entries").append(card)}}catch(e){$("#entries").textContent=e.message}$("#detail").scrollIntoView({behavior:"smooth",block:"start"})}
+function move(n){month+=n;if(month<1){month=12;year--}else if(month>12){month=1;year++}showMonth()}
+$("#prev").addEventListener("click",()=>move(-1));$("#next").addEventListener("click",()=>move(1));showMonth();
+</script></body></html>
