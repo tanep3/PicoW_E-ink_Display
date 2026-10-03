@@ -2,7 +2,7 @@
 
 ## 自動テスト
 
-`python3 -m unittest discover -s tests -v` で、RAW4000の回転・極性・padding、PNG検査、履歴とlatestの原子的切替、重複スキップ、画像能力ゲート、Picoの通信失敗・BUSY期限、JSTギャラリー、LAN配信を確認した。最終実行結果は14件成功。
+`python3 -m unittest discover -s tests -v` で、RAW4000の回転・極性・padding、PNG検査、履歴とlatestの原子的切替、重複スキップ、画像能力ゲート、Picoの通信失敗・BUSY期限、JSTギャラリー、LAN配信を確認した。画像生成の最終メッセージによる実PNG照合と、未生成時の最大1回再試行も追加して確認した。最終実行結果は16件成功。
 
 ## 実画像の通し試験
 
@@ -15,3 +15,9 @@
 HTTP user serviceは `192.168.0.120:16150` でactive/enabled。`/` と `/gallery/`、statusを確認し、日付を選ぶと検証用画像4枚と本番画像1枚を表示した。後続のユーザー承認で検証済み実画像を本番latest（publish_seq=1）へ公開し、HTTPでPNGと4000バイトRAWのSHA-256一致を確認した。検証パターンは本番latestへ混入させていない。毎時生成timerはactive/enabledで、2026-10-03 21:47 JST時点の初回予定は同日22:00 JST、`LastTriggerUSec` は空欄だった。初回定時実行と長期運転はこの記録時点では未検証。
 
 Picoでは転送した4ファイルの再起動後SHA-256と構文、RAW4000自己テストを確認した。Wi-Fi設定は本人がPico本体へ転送し、Codexは秘密値を読まずに新プログラムでWi-Fi接続と母艦HTTP応答を確認した。正規latest公開後、既存V4ドライバーと修正した新ドライバーで同じRAWの実描画が完了した。旧 `main.py` のハッシュを照合して `main_legacy.py` に退避し、新 `main.py` を起動。約3分の初回省電力待機後にユーザーが実画面で風刺画の表示を確認した。USB CDCが待機中に再接続されない現象を観測したが、画像表示は成立した。非対称パターンによる画面全域の方向・端画素、消費電力・バッテリー寿命、次回の毎時更新と72時間連続運転は未検証。
+
+## 初回定時生成（22:00 JST）
+
+timerは22:00:17に生成serviceを起動し、22:03:47に失敗で終了した。DBのUTC slot `497509` は `FAILED`、理由は `Codex did not call the image generation tool`。コードはCodexのstderrに特定のツール名があることを必須にしていた。同じ時間帯22:02:53にCodexの生成画像ディレクトリに新しいPNGが1枚できているが、実行時の最終メッセージを保存していなかったため、このジョブによる画像かどうかは確定できない。失敗時のlatestは `publish_seq=1` のままで、HTTPも前回画像を返した。HTTPサーバはPicoのリクエストをログに記録せず、Pico側のtelemetryもないため、この定時処理後の自然wakeはログから確認できない。
+
+以後のジョブではCodexの最終メッセージと新規PNGを照合し、検証できない場合のみ同じslot内で1回再試行する。両方失敗すればlatestを維持する。生成serviceの期限を30分へ延長して反映済み。次回timerは23:00 JST予定。Picoが前回取得したserver_timeから正常に待機していれば22:20 JST付近に自然wakeする見込みだが、今回は新しいフレームがないため再描画しない想定であり、Pico本体の表示・wakeは未観測である。

@@ -101,6 +101,59 @@ class ArchiveTests(unittest.TestCase):
                  patch.object(generator.subprocess, "run", side_effect=fake_run):
                 self.assertEqual(source_png(), backend.generate(story, root))
 
+    def test_codex_image_backend_accepts_verified_message_path_without_tool_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            generated = root / "generated_images"
+            output = generated / "new-session" / "image.png"
+            backend = generator.CodexImageBackend(generated)
+            calls = []
+
+            def fake_run(command, **kwargs):
+                calls.append(command)
+                output.parent.mkdir(parents=True)
+                output.write_bytes(source_png())
+                Path(command[command.index("--output-last-message") + 1]).write_text(str(output))
+                return types.SimpleNamespace(stderr=b"Codex completed without a tool name")
+
+            story = {"facts": ["fact"], "source_url": "https://example.com",
+                     "satirical_metaphor": "a scale", "visual_composition": "one scene",
+                     "forbidden_claims": []}
+            with patch.object(generator.shutil, "which", return_value="/usr/bin/codex"), \
+                 patch.object(generator.subprocess, "run", side_effect=fake_run):
+                self.assertEqual(source_png(), backend.generate(story, root))
+            self.assertEqual(1, len(calls))
+
+    def test_codex_image_backend_retries_missing_output_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            generated = root / "generated_images"
+            output = generated / "second-session" / "image.png"
+            backend = generator.CodexImageBackend(generated)
+            calls = []
+
+            def fake_run(command, **kwargs):
+                calls.append(command)
+                if len(calls) == 2:
+                    output.parent.mkdir(parents=True)
+                    output.write_bytes(source_png())
+                    Path(command[command.index("--output-last-message") + 1]).write_text(str(output))
+                return types.SimpleNamespace(stderr=b"no tool marker")
+
+            story = {"facts": ["fact"], "source_url": "https://example.com",
+                     "satirical_metaphor": "a scale", "visual_composition": "one scene",
+                     "forbidden_claims": []}
+            with patch.object(generator.shutil, "which", return_value="/usr/bin/codex"), \
+                 patch.object(generator.subprocess, "run", side_effect=fake_run):
+                self.assertEqual(source_png(), backend.generate(story, root))
+            self.assertEqual(2, len(calls))
+
+            with patch.object(generator.shutil, "which", return_value="/usr/bin/codex"), \
+                 patch.object(generator.subprocess, "run", return_value=types.SimpleNamespace(stderr=b"")) as run:
+                with self.assertRaisesRegex(RuntimeError, "after 2 attempts"):
+                    backend.generate(story, root)
+                self.assertEqual(2, run.call_count)
+
     def test_publish_and_failed_switch_preserves_latest(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = archive.Archive(Path(tmp))

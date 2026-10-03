@@ -22,7 +22,7 @@ python3 -m unittest discover -s tests -v
 
 `python3 -m ai_news.server` は保存済み画像だけを配信します。GETで生成はしません。配信 `/v1/latest`、不変RAW/PNG、status、閲覧画面 `/` と `/gallery/` は同じ設定ポートです。閲覧とPico取得に追加のアプリ認証はありません。
 
-user unitテンプレートは `systemd/` にあります。HTTP serviceと生成timerはこのraspi5の開発パスと状態ディレクトリで導入済みです。`systemctl --user status ai-news-http.service ai-news-generate.timer` と `systemctl --user list-timers ai-news-generate.timer` で状態を確認できます。timerは毎時00分、`Persistent=false` です。生成サービスは25分の起動期限、各UTC時間スロットの冪等処理、排他ロックを備えます。実際の定時結果は `journalctl --user -u ai-news-generate.service` と `state/jobs.sqlite3` で確認します。
+user unitテンプレートは `systemd/` にあります。HTTP serviceと生成timerはこのraspi5の開発パスと状態ディレクトリで導入済みです。`systemctl --user status ai-news-http.service ai-news-generate.timer` と `systemctl --user list-timers ai-news-generate.timer` で状態を確認できます。timerは毎時00分、`Persistent=false` です。生成サービスは30分の起動期限、各UTC時間スロットの冪等処理、排他ロックを備えます。Codex画像を照合できない場合は同じニュースで最大1回だけ再試行します。実際の定時結果は `journalctl --user -u ai-news-generate.service` と `state/jobs.sqlite3` で確認します。
 
 ## Pico
 

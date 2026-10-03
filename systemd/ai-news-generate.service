@@ -8,5 +8,5 @@ WorkingDirectory=/home/tane/dev/PicoW/PicoW_E-ink_Display
 Environment=AI_NEWS_STATE=/home/tane/dev/PicoW/PicoW_E-ink_Display/state
 Environment=PATH=/home/tane/.local/bin:/usr/local/bin:/usr/bin
 ExecStart=/usr/bin/python3 -m ai_news.generator
-TimeoutStartSec=25min
+TimeoutStartSec=30min
 UMask=0077
