@@ -31,3 +31,7 @@ timerは22:00:17に生成serviceを起動し、22:03:47に失敗で終了した�
 ユーザーの指摘を受け、起動時の180秒 `lightsleep` を削除した。現在の `main.py` は起動直後に取得・検証・描画し、その後180秒はUSB REPLが使える状態で待ってから次の定時wakeまで省電力待機する。BOOTSELで現行フラッシュを非公開領域に検証付きでバックアップし、LittleFS上の `main.py` だけを変更した。再マウント後に他の7ファイルのSHA-256不変を確認し、変更4セクタだけをUF2で書き込み・照合した。`picotool reboot -a` 後、PicoのUSBシリアル再認識を確認。最終コードの単体・HTTP統合テスト17件は全件成功した。
 
 同じ絵の再描画ではユーザーが更新時刻を判別できないため、保存済みの別画像（SHA-256 `49121f23784509cc87c2cc0f6aa580829ff49eb53d6b8849c78606f164e78183`）を再検証し、試験用の最新版 `publish_seq=3` に原子的に切り替えた。HTTPで新manifestが返ること、前後のRAW4000が異なることを確認した。Picoはすでに180秒のUSB操作時間を終えていたため、ユーザーが電源を入れ直した。ユーザーによると、電源投入15秒後に画面が別の絵に変わった。これにより修正版の起動時取得と実画面切替を確認した。次回以降の定時wakeは未検証。
+
+## 23時の定時生成確認
+
+2026-10-03 23:00 JSTのtimerは `ai-news-generate.service` を起動した。ジョブslot `497510` は `SELECTED` → `GENERATING` → `PUBLISHED` となり、サービスは正常終了。Codexの画像生成による新規PNGを検証し、250×122の1bit画像（SHA-256 `acd457734eeb85e2644ca1dcfd9b8c915677984f69805b0b0068f3a6e162d11c`）とRAW4000を保存した。出典は [Le Mondeの記事](https://www.lemonde.fr/en/international/article/2026/10/01/military-ai-france-challenges-us-dominance-over-nato-s-classified-networks_6758154_4.html)。本番latestは `publish_seq=4` となり、HTTPのmanifestも一致した。PNGとRAWのSHA-256を保存manifestと照合済み。今回の画像をPicoが次回自然wakeで取得・表示するかは未観測。
