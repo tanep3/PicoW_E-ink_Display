@@ -16,6 +16,7 @@ WIFI_BUDGET_MS = 20_000
 BUSY_BUDGET_MS = 60_000
 MAINTENANCE_MS = 86_400_000
 MIN_REFRESH_MS = 180_000
+USB_ACCESS_MS = 180_000
 
 
 def _remaining(deadline):
@@ -185,8 +186,8 @@ def run_wake(last_hash=None, last_display_ms=None, panel_factory=Panel, client=N
 def main():
     last_hash = None
     last_display_ms = None
-    # Reset means display state UNKNOWN. Avoid immediate repeated physical update.
-    machine.lightsleep(MIN_REFRESH_MS)
+    # Reset means display state UNKNOWN. Fetch the latest frame immediately;
+    # run_wake only initializes the panel after the full frame is verified.
     while True:
         start = time.ticks_ms()
         wait_ms = 3_600_000
@@ -194,6 +195,11 @@ def main():
             _, last_hash, last_display_ms, wait_ms = run_wake(last_hash, last_display_ms)
         except Exception as exc:
             print("wake failed:", type(exc).__name__)
+        # Keep USB REPL available after every wake, including failures, so the
+        # program can be inspected or replaced before entering lightsleep.
+        access_deadline = time.ticks_add(time.ticks_ms(), USB_ACCESS_MS)
+        while time.ticks_diff(access_deadline, time.ticks_ms()) > 0:
+            time.sleep_ms(min(1000, time.ticks_diff(access_deadline, time.ticks_ms())))
         next_due = time.ticks_add(start, wait_ms)
         while time.ticks_diff(next_due, time.ticks_ms()) > 0:
             machine.lightsleep(min(60_000, time.ticks_diff(next_due, time.ticks_ms())))

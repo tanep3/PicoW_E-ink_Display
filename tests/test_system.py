@@ -254,6 +254,37 @@ class PicoFlowTests(unittest.TestCase):
             cls.main = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(cls.main)
 
+    def test_boot_fetches_before_sleep_and_keeps_usb_access(self):
+        main = self.main
+        clock = [0]
+        fetches = []
+        first_sleep = []
+
+        class StopLoop(BaseException):
+            pass
+
+        def fetch(*args):
+            fetches.append(clock[0])
+            if len(fetches) == 2:
+                raise StopLoop()
+            return "displayed", "hash", clock[0], 3_600_000
+
+        def lightsleep(ms):
+            if not first_sleep:
+                first_sleep.append(clock[0])
+            clock[0] += ms
+
+        fake_time = types.SimpleNamespace(
+            ticks_ms=lambda: clock[0], ticks_add=lambda a, b: a + b,
+            ticks_diff=lambda a, b: a - b,
+            sleep_ms=lambda ms: clock.__setitem__(0, clock[0] + ms))
+        with patch.object(main, "time", fake_time), patch.object(main, "run_wake", side_effect=fetch), \
+             patch.object(main.machine, "lightsleep", side_effect=lightsleep, create=True):
+            with self.assertRaises(StopLoop):
+                main.main()
+        self.assertEqual([0, 3_600_000], fetches)
+        self.assertEqual([180_000], first_sleep)
+
     def test_skip_and_reject_without_panel_or_clear(self):
         main = self.main
         wire = frame.png_to_wire(frame.normalize(source_png()))
