@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import fcntl
 import json
 import os
@@ -92,6 +92,26 @@ class Archive:
         with self.connect() as conn:
             return {row[0] for row in conn.execute("SELECT frame_id FROM published_frames")}
 
+    def recent_source_urls(self, reference: datetime) -> set[str]:
+        """Sources of frames successfully published in the preceding rolling 24h."""
+        self.reconcile_latest()
+        cutoff = reference.astimezone(timezone.utc) - timedelta(hours=24)
+        with self.connect() as conn:
+            publications = conn.execute(
+                "SELECT frame_id,published_at FROM published_frames").fetchall()
+        urls = set()
+        for frame_id, published_at in publications:
+            when = datetime.fromisoformat(published_at)
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=timezone.utc)
+            if when <= cutoff:
+                continue
+            record = json.loads(self.frame_path(frame_id, "json").read_text(encoding="utf-8"))
+            sources = record.get("metadata", {}).get("source_urls", [])
+            if isinstance(sources, list):
+                urls.update(url for url in sources if isinstance(url, str))
+        return urls
+
     @contextmanager
     def connect(self):
         conn = sqlite3.connect(self.db)
@@ -102,13 +122,23 @@ class Archive:
             conn.close()
 
     @contextmanager
-    def lock(self):
+    def lock(self, *, blocking=True):
         with open(self.root / ".generator.lock", "a+b") as stream:
-            fcntl.flock(stream, fcntl.LOCK_EX)
+            fcntl.flock(stream, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
             try:
                 yield
             finally:
                 fcntl.flock(stream, fcntl.LOCK_UN)
+
+    def job_exists(self, slot: int) -> bool:
+        with self.connect() as conn:
+            return conn.execute("SELECT 1 FROM jobs WHERE slot=?", (slot,)).fetchone() is not None
+
+    def next_manual_slot(self) -> int:
+        """Allocate an unused negative slot while holding the generator lock."""
+        with self.connect() as conn:
+            row = conn.execute("SELECT MIN(slot) FROM jobs WHERE slot < 0").fetchone()
+        return (row[0] or 0) - 1
 
     def begin(self, slot: int) -> bool:
         with self.connect() as conn:

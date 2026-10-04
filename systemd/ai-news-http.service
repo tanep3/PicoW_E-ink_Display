@@ -8,6 +8,7 @@ WorkingDirectory=/home/tane/dev/PicoW/PicoW_E-ink_Display
 Environment=AI_NEWS_STATE=/home/tane/dev/PicoW/PicoW_E-ink_Display/state
 Environment=AI_NEWS_BIND=192.168.0.120
 Environment=AI_NEWS_PORT=16150
+Environment=PATH=/home/tane/.local/bin:/usr/local/bin:/usr/bin
 ExecStart=/usr/bin/python3 -m ai_news.server
 Restart=on-failure
 RestartSec=30s
