@@ -69,3 +69,13 @@ retry_count = 2
 interval_seconds = 0
 deadline_seconds = 0
 attempt_timeout_seconds = 300
+
+# PUSH delivery is independent of news and image generation retries.
+# retry_count excludes the first attempt: 2 means up to 3 sends.
+[push]
+host = "192.168.0.172"
+port = 16151
+retry_count = 2
+interval_seconds = 30
+attempt_timeout_seconds = 60
+deadline_seconds = 0

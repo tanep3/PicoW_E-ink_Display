@@ -49,6 +49,7 @@ def save_selected_topic(topic_id: str, path: Path = CONFIG_PATH) -> str:
     old_news = {k: v for k, v in before.get("news", {}).items() if k != "selected_topic_id"}
     new_news = {k: v for k, v in after["news"].items() if k != "selected_topic_id"}
     if (old_news != new_news or before.get("image", {}) != after.get("image", {})
+            or before.get("push", {}) != after.get("push", {})
             or after["news"]["selected_topic_id"] != topic_id):
         raise ValueError("config changed unexpectedly")
     atomic_write(path, updated.encode("utf-8"))

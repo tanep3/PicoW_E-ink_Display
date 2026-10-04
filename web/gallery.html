@@ -19,7 +19,7 @@ button:disabled{opacity:.55;cursor:wait}.actions{display:flex;align-items:center
 </style></head><body>
 <h1>AIニュース風刺画アーカイブ</h1><p>日本時間の日付から、保存された絵を探せます。</p>
 <div class="actions"><button id="generate" class="primary" type="button">新しい絵を生成</button><a href="/settings/">設定・題材を選ぶ</a><span id="generation-status" role="status" aria-live="polite"></span></div>
-<p>生成には数分かかる場合があります。完成後、Picoは次の自然取得時に表示を更新します。</p>
+<p>生成には数分かかる場合があります。公開後にPicoへ送信し、表示結果を別に確認します。</p><p id="push-status" role="status" aria-live="polite"></p>
 <section class="latest" aria-label="最新の絵"><h2>最新の絵</h2><p id="latest-message">読込中…</p><img id="latest-image" alt="最新の絵" class="hidden"></section>
 <nav class="toolbar" aria-label="月の移動"><button id="prev" type="button">前の月</button><strong id="month"></strong><button id="next" type="button">次の月</button></nav>
 <p id="message" role="status"></p><div class="week" aria-hidden="true"><span>日</span><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span>土</span></div>
@@ -28,7 +28,7 @@ button:disabled{opacity:.55;cursor:wait}.actions{display:flex;align-items:center
 <script>
 "use strict";
 const $=s=>document.querySelector(s),pad=n=>String(n).padStart(2,"0");
-let now=new Date(),selectedDay=null,seenRun=null,year=Number(new Intl.DateTimeFormat("en-US",{timeZone:"Asia/Tokyo",year:"numeric"}).format(now));
+let now=new Date(),selectedDay=null,seenRun=null,watchedPush=new Map(),year=Number(new Intl.DateTimeFormat("en-US",{timeZone:"Asia/Tokyo",year:"numeric"}).format(now));
 let month=Number(new Intl.DateTimeFormat("en-US",{timeZone:"Asia/Tokyo",month:"numeric"}).format(now));
 async function get(path){const r=await fetch(path,{credentials:"same-origin",cache:"no-store"});if(!r.ok)throw Error("取得できませんでした ("+r.status+")");return r.json()}
 async function showMonth(){const key=year+"-"+pad(month);$("#month").textContent=year+"年"+month+"月";$("#calendar").replaceChildren();$("#detail").classList.add("hidden");$("#message").textContent="読込中…";
@@ -45,9 +45,19 @@ async function showDay(day,scroll=true){selectedDay=day;$("#detail").classList.r
  const t=document.createElement("time");t.dateTime=item.jst_at;t.textContent="生成: "+item.jst_at.replace("T"," ").slice(0,19)+" JST";card.append(t);
  const img=document.createElement("img");img.src=item.image_url;img.alt=item.title;img.loading="lazy";card.append(img);
  const p=document.createElement("p");if(item.source_urls.length){p.append("出典: ");for(const url of item.source_urls){const a=document.createElement("a");a.href=url;a.target="_blank";a.rel="noopener noreferrer";a.textContent=url;p.append(a,document.createTextNode(" "))}}else p.textContent="出典: 未登録";
- card.append(p);$("#entries").append(card)}}catch(e){$("#entries").textContent=e.message}if(scroll)$("#detail").scrollIntoView({behavior:"smooth",block:"start"})}
+ card.append(p);const pushButton=document.createElement("button"),pushMessage=document.createElement("span");pushButton.type="button";pushButton.textContent="PICOに表示";pushButton.addEventListener("click",()=>pushFrame(item.frame_id,pushButton,pushMessage));card.append(pushButton,pushMessage);$("#entries").append(card)}}catch(e){$("#entries").textContent=e.message}if(scroll)$("#detail").scrollIntoView({behavior:"smooth",block:"start"})}
+async function pushFrame(sourceId,button,message){button.disabled=true;message.textContent=" 送信を予約しています…";
+ try{const r=await fetch("/v1/push",{method:"POST",credentials:"same-origin",cache:"no-store",headers:{"Content-Type":"application/json","X-AI-News-Action":"push"},body:JSON.stringify({source_id:sourceId})});
+ if(r.status!==202)throw Error("request failed");const job=await r.json();watchedPush.set(job.seq,{button,message});await pushStatus()}
+ catch(e){message.textContent=" 送信を開始できませんでした。";button.disabled=false}}
+function pushLabel(job){const labels={idle:"",queued:"Picoへの送信待ちです。",sending:"Picoへ送信中です。",displayed:"Picoに表示しました。",superseded:"新しい表示要求に切り替わりました。"};
+ if(job.state==="failed"){if(job.error_code==="registration_failed")return "作品は公開されましたが、Picoへの送信登録に失敗しました。";const errors={connection:"Picoに接続できませんでした。",timeout:"Picoとの通信が時間切れになりました。",data_invalid:"画像データの検証に失敗しました。",panel_failed:"Picoで描画に失敗しました。画面状態を確認してください。",unknown_result:"表示結果を確認できません。Picoの画面を確認してください。",config_invalid:"送信設定を読み込めませんでした。"};return (errors[job.error_code]??"Picoへの送信に失敗しました。")+" 作品は保存されています。"}
+ return labels[job.state]??"送信状態を確認できません。"}
+async function pushStatus(){try{const job=await get("/v1/push/status");$("#push-status").textContent=pushLabel(job);
+ for(const [seq,view] of watchedPush){const own=job.seq===seq?job:await get("/v1/push/status?seq="+seq);view.message.textContent=" "+pushLabel(own);if(["displayed","failed","superseded"].includes(own.state)){view.button.disabled=false;watchedPush.delete(seq)}}}
+ catch(e){$("#push-status").textContent="Picoへの送信状態を取得できませんでした。"}}
 async function showLatest(){try{const data=await get("/v1/latest"),img=$("#latest-image");img.src="/v1/frames/"+data.frame_id+".png";img.classList.remove("hidden");$("#latest-message").textContent="公開番号 "+data.publish_seq}catch(e){$("#latest-message").textContent="公開済みの絵はまだありません。"}}
-async function refreshAfterGeneration(){const day=selectedDay;await showLatest();await showMonth();if(day)await showDay(day,false)}
+async function refreshAfterGeneration(){const day=selectedDay;await showLatest();await showMonth();if(day)await showDay(day,false);await pushStatus()}
 async function generationStatus(){try{const data=await get("/v1/generate/status"),state=data.state;$("#generate").disabled=["running","busy","invalid_topic","invalid_config"].includes(state);
  const labels={idle:"",running:"生成中です。画面を閉じても処理は続きます。",busy:"別の生成が進行中です。",succeeded:"新しい絵を公開しました。",unchanged:"生成しましたが、最新画像は変わりませんでした。",failed:"生成に失敗しました。前の絵を保持しています。",invalid_topic:"選択中の題材が削除されています。設定画面で選び直してください。",invalid_config:"configを読み込めません。母艦の設定を確認してください。"};
  $("#generation-status").textContent=labels[state]??"状態を確認できません。";
@@ -58,5 +68,5 @@ async function startGeneration(){const button=$("#generate");button.disabled=tru
  if(response.status!==202&&response.status!==409)throw Error("request failed");await generationStatus()}
  catch(e){$("#generation-status").textContent="開始できませんでした。しばらくしてから再試行してください。";button.disabled=false}}
 function move(n){month+=n;if(month<1){month=12;year--}else if(month>12){month=1;year++}selectedDay=null;showMonth()}
-$("#prev").addEventListener("click",()=>move(-1));$("#next").addEventListener("click",()=>move(1));$("#generate").addEventListener("click",startGeneration);showMonth();showLatest();generationStatus();setInterval(generationStatus,5000);
+$("#prev").addEventListener("click",()=>move(-1));$("#next").addEventListener("click",()=>move(1));$("#generate").addEventListener("click",startGeneration);showMonth();showLatest();generationStatus();pushStatus();setInterval(generationStatus,5000);setInterval(pushStatus,5000);
 </script></body></html>

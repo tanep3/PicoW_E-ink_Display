@@ -283,8 +283,23 @@ def run_once(root: Path, backend, *, now=None, news_fetcher=None,
                 }
                 archive.state(slot, "VALIDATED")
                 require_unused_source(news)
-                archive.publish(png, metadata)
+                before_publication = archive.latest()
+                publication = archive.publish(png, metadata)
                 archive.state(slot, "PUBLISHED")
+                if (before_publication is None or
+                        publication["publish_seq"] != before_publication["publish_seq"]):
+                    # Delivery is a separate job. A failed enqueue never regenerates art
+                    # or rolls back the immutable publication.
+                    try:
+                        from .push import PushQueue
+                        PushQueue(archive).enqueue(publication["frame_id"])
+                    except Exception as exc:
+                        print("PUSH enqueue failed:", type(exc).__name__)
+                        try:
+                            from .push import record_registration_error
+                            record_registration_error(archive, publication)
+                        except Exception as marker_exc:
+                            print("PUSH registration status failed:", type(marker_exc).__name__)
                 return "published"
         except Exception as exc:
             archive.state(slot, "FAILED", type(exc).__name__ + ": " + str(exc)[:200])

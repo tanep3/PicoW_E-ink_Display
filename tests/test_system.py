@@ -670,118 +670,146 @@ class WebControlTests(unittest.TestCase):
                 generator.validate_news(ArchiveTests.NEWS)
 
 
-class IntegrityTests(unittest.TestCase):
-    def test_response_length_and_manifest_rejection(self):
-        body = b"{}"
-        protocol.validate_response(200, {"content-type": "application/json",
-                                         "content-length": "2"}, body, "application/json")
-        with self.assertRaises(ValueError):
-            protocol.validate_response(200, {"content-type": "application/json",
-                                             "content-length": "3"}, body, "application/json")
-        manifest = {"schema_version": 1, "format_id": frame.FORMAT_ID, "length": 4000,
-                    "frame_id": "a" * 64 + "-a1", "png_sha256": "a" * 64,
-                    "wire_sha256": "b" * 64, "publish_seq": 1,
-                    "raw_path": "/v1/frames/" + "a" * 64 + "-a1.raw"}
-        protocol.validate_manifest(json.dumps(manifest).encode())
-        manifest["raw_path"] = "http://evil.test/private"
-        with self.assertRaises(ValueError):
-            protocol.validate_manifest(json.dumps(manifest).encode())
-
-
-class PicoFlowTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        import sys
-        fake_secrets = types.SimpleNamespace(WIFI_SSID="test", WIFI_PASSWORD="test")
-        with patch.dict(sys.modules, {"network": types.SimpleNamespace(STA_IF=0),
-                                      "machine": types.SimpleNamespace(), "secrets": fake_secrets}):
-            spec = importlib.util.spec_from_file_location("pico_test_main",
-                      Path(__file__).resolve().parents[1] / "pico/main.py")
-            cls.main = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(cls.main)
-
-    def test_boot_fetches_before_sleep_and_keeps_usb_access(self):
-        main = self.main
-        clock = [0]
-        fetches = []
-        first_sleep = []
-
-        class StopLoop(BaseException):
-            pass
-
-        def fetch(*args):
-            fetches.append(clock[0])
-            if len(fetches) == 2:
-                raise StopLoop()
-            return "displayed", "hash", clock[0], 3_600_000
-
-        def lightsleep(ms):
-            if not first_sleep:
-                first_sleep.append(clock[0])
-            clock[0] += ms
-
-        fake_time = types.SimpleNamespace(
-            ticks_ms=lambda: clock[0], ticks_add=lambda a, b: a + b,
-            ticks_diff=lambda a, b: a - b,
-            sleep_ms=lambda ms: clock.__setitem__(0, clock[0] + ms))
-        with patch.object(main, "time", fake_time), patch.object(main, "run_wake", side_effect=fetch), \
-             patch.object(main.machine, "lightsleep", side_effect=lightsleep, create=True):
-            with self.assertRaises(StopLoop):
-                main.main()
-        self.assertEqual([0, 3_600_000], fetches)
-        self.assertEqual([180_000], first_sleep)
-
-    def test_skip_and_reject_without_panel_or_clear(self):
-        main = self.main
+class PicoPushTests(unittest.TestCase):
+    def test_split_push_duplicate_stale_and_old_image_on_invalid(self):
+        import push_receiver as receiver
         wire = frame.png_to_wire(frame.normalize(source_png()))
-        manifest = {"schema_version": 1, "format_id": frame.FORMAT_ID, "length": 4000,
-                    "frame_id": frame.sha256(frame.normalize(source_png())) + "-a1",
-                    "png_sha256": "a" * 64, "wire_sha256": frame.sha256(wire),
-                    "publish_seq": 1, "server_time": "2026-10-03T01:00:00+00:00"}
-        manifest["raw_path"] = "/v1/frames/" + manifest["frame_id"] + ".raw"
-        class WLAN:
-            active_values = []
-            def active(self, value): self.active_values.append(value)
-            def disconnect(self): pass
-        wlan = WLAN()
-        class Client:
-            calls = []
-            def __init__(self, raw): self.raw = raw
-            def get(self, path, deadline, max_body, expected_type):
-                self.calls.append(path)
-                return (200, json.dumps(manifest).encode()) if path == "/v1/latest" else (200, self.raw)
-        clock = types.SimpleNamespace(ticks_ms=lambda: 1000, ticks_add=lambda a,b:a+b,
-                                      ticks_diff=lambda a,b:a-b)
-        def forbidden_panel():
-            self.fail("panel initialized before valid frame")
-        with patch.object(main, "time", clock), patch.object(main, "connect_wifi", return_value=wlan):
-            client = Client(wire)
-            result = main.run_wake(last_hash=manifest["wire_sha256"], last_display_ms=0,
-                                   panel_factory=forbidden_panel, client=client)
-            self.assertEqual("unchanged", result[0])
-            self.assertEqual(["/v1/latest"], client.calls)
-            self.assertIn(False, wlan.active_values)
-            with self.assertRaises(ValueError):
-                main.run_wake(panel_factory=forbidden_panel, client=Client(wire[:-1]))
-            self.assertIn(False, wlan.active_values)
+        digest = frame.sha256(wire)
+        frame_id = frame.sha256(frame.normalize(source_png())) + "-a1"
+        def request(seq, body=wire, reported_digest=digest):
+            return (("POST /v1/frame HTTP/1.1\r\nContent-Type: application/octet-stream\r\n"
+                     "Content-Length: 4000\r\nX-Push-Seq: %d\r\nX-Frame-ID: %s\r\n"
+                     "X-Wire-SHA256: %s\r\nX-Format-ID: %s\r\n\r\n"
+                     % (seq, frame_id, reported_digest, frame.FORMAT_ID)).encode() + body)
+        class Socket:
+            def __init__(self, data, chunks=(1, 17, 700)):
+                self.data, self.chunks, self.sent, self.closed = data, iter(chunks), b"", False
+            def settimeout(self, seconds): pass
+            def recv(self, size):
+                try: limit = next(self.chunks)
+                except StopIteration: limit = size
+                result, self.data = self.data[:min(size, limit)], self.data[min(size, limit):]
+                return result
+            def sendall(self, data): self.sent += data
+            def close(self): self.closed = True
+        events = []
+        class Panel:
+            def init(self, deadline): events.append("init")
+            def display(self, data, deadline):
+                self_ref.assertEqual(wire, data)
+                events.append("display")
+            def sleep(self, deadline): events.append("sleep")
+        self_ref = self
+        with tempfile.TemporaryDirectory() as tmp:
+            state = str(Path(tmp) / "display.json")
+            sock = Socket(request(1))
+            self.assertEqual("displayed", receiver.handle_connection(sock, receiver.SENDER_IP,
+                                                                       Panel, state))
+            self.assertEqual(["init", "display", "sleep"], events)
+            self.assertIn(b"200 OK", sock.sent)
+            self.assertEqual((1, digest), receiver.load_state(state))
+            events.clear()
+            self.assertEqual("duplicate", receiver.handle_connection(Socket(request(1)),
+                                        receiver.SENDER_IP, Panel, state))
+            receiver.save_state(2, digest, state)
+            self.assertEqual("stale", receiver.handle_connection(Socket(request(1)),
+                                        receiver.SENDER_IP, Panel, state))
+            self.assertEqual("invalid", receiver.handle_connection(Socket(request(3, wire[:-1])),
+                                        receiver.SENDER_IP, Panel, state))
+            self.assertEqual("invalid", receiver.handle_connection(Socket(request(3, wire, "0"*64)),
+                                        receiver.SENDER_IP, Panel, state))
+            self.assertEqual("invalid", receiver.handle_connection(Socket(request(3)[:100]),
+                                        receiver.SENDER_IP, Panel, state))
+            self.assertEqual([], events)
+            self.assertEqual((2, digest), receiver.load_state(state))
+            self.assertEqual("forbidden", receiver.handle_connection(Socket(request(2)),
+                                        "192.168.0.9", Panel, state))
 
-    def test_wifi_connect_timeout_disables_radio(self):
-        main = self.main
+    def test_receive_timeout_and_panel_failure_do_not_ack_success(self):
+        import push_receiver as receiver
+        wire = frame.png_to_wire(frame.normalize(source_png()))
+        digest = frame.sha256(wire)
+        frame_id = "a" * 64 + "-a1"
+        header = (("POST /v1/frame HTTP/1.1\r\nContent-Type: application/octet-stream\r\n"
+                   "Content-Length: 4000\r\nX-Push-Seq: 7\r\nX-Frame-ID: %s\r\n"
+                   "X-Wire-SHA256: %s\r\nX-Format-ID: %s\r\n\r\n"
+                   % (frame_id, digest, frame.FORMAT_ID)).encode())
+        class Socket:
+            def __init__(self, data, timeout=False):
+                self.data, self.timeout, self.sent = data, timeout, b""
+            def settimeout(self, value): pass
+            def recv(self, size):
+                if not self.data and self.timeout: raise TimeoutError("no more data")
+                result, self.data = self.data[:size], self.data[size:]
+                return result
+            def sendall(self, data): self.sent += data
+            def close(self): pass
+        with tempfile.TemporaryDirectory() as tmp:
+            state = str(Path(tmp) / "state.json")
+            panel_called = []
+            def forbidden(): panel_called.append(1); raise AssertionError("panel")
+            partial = Socket(header + wire[:42], True)
+            self.assertEqual("invalid", receiver.handle_connection(partial, receiver.SENDER_IP,
+                                                                       forbidden, state))
+            self.assertEqual([], panel_called)
+            self.assertEqual((0, ""), receiver.load_state(state))
+            class BadPanel:
+                def init(self, deadline): pass
+                def display(self, wire, deadline): raise RuntimeError("BUSY")
+                def sleep(self, deadline): panel_called.append("sleep")
+            complete = Socket(header + wire)
+            self.assertEqual("panel-failed", receiver.handle_connection(complete,
+                                            receiver.SENDER_IP, BadPanel, state))
+            self.assertIn(b"503 Service Unavailable", complete.sent)
+            self.assertEqual((0, ""), receiver.load_state(state))
+
+    def test_header_and_body_limits(self):
+        import push_receiver as receiver
+        wire = frame.png_to_wire(frame.normalize(source_png()))
+        digest = frame.sha256(wire)
+        frame_id = "a" * 64 + "-a1"
+        head = (("POST /v1/frame HTTP/1.1\r\nContent-Type: application/octet-stream\r\n"
+                 "Content-Length: 4000\r\nX-Push-Seq: 1\r\nX-Frame-ID: %s\r\n"
+                 "X-Wire-SHA256: %s\r\nX-Format-ID: %s\r\n"
+                 % (frame_id, digest, frame.FORMAT_ID)).encode())
+        with self.assertRaises(ValueError): receiver.parse_head(head + b"\r\nX-Pad: " + b"a"*3000)
+        class Socket:
+            def __init__(self, data): self.data = data
+            def settimeout(self, seconds): pass
+            def recv(self, size):
+                result, self.data = self.data[:size], self.data[size:]
+                return result
+        with self.assertRaises(ValueError):
+            receiver.read_frame(Socket(head + b"\r\n\r\n" + wire + b"extra"), receiver.ticks_add(receiver.ticks_ms(), 1000))
+
+    def test_wifi_power_save_and_no_fetch_on_reconnect(self):
+        import push_receiver as receiver
         class WLAN:
-            states = []
-            def active(self, value): self.states.append(value)
-            def connect(self, *args): pass
-            def isconnected(self): return False
-        wlan = WLAN()
-        clock = [0]
-        ticks = types.SimpleNamespace(ticks_ms=lambda: clock[0],
-                  ticks_add=lambda a,b:a+b, ticks_diff=lambda a,b:a-b,
-                  sleep_ms=lambda ms:clock.__setitem__(0,clock[0]+ms))
-        network = types.SimpleNamespace(STA_IF=0, WLAN=lambda _:wlan)
-        with patch.object(main,"network",network),patch.object(main,"time",ticks):
-            with self.assertRaises(TimeoutError):
-                main.connect_wifi(120_000)
-        self.assertEqual([True, False], wlan.states)
+            PM_POWERSAVE = 42
+            def __init__(self, mode): self.calls = []
+            def active(self, value): self.calls.append(("active", value))
+            def connect(self, *args): self.calls.append(("connect", len(args)))
+            def isconnected(self): return True
+            def config(self, **kwargs): self.calls.append(("config", kwargs))
+            def ifconfig(self, value=None):
+                if value is not None:
+                    self.calls.append(("ifconfig", value))
+                    self.addresses = value
+                return self.addresses
+        wlan = WLAN(0)
+        fake_network = types.SimpleNamespace(STA_IF=0, WLAN=type("Factory", (),
+                                {"PM_POWERSAVE":42,"__call__":lambda _, mode:wlan})())
+        with patch.dict(sys.modules, {"network": fake_network,
+                                      "secrets": types.SimpleNamespace(WIFI_SSID="test", WIFI_PASSWORD="test")}):
+            self.assertIs(wlan, receiver.connect_wifi())
+        self.assertIn(("config", {"pm":42}), wlan.calls)
+        self.assertIn(("ifconfig", ("192.168.0.172", "255.255.255.0",
+                                       "192.168.0.1", "192.168.0.1")), wlan.calls)
+        self.assertLess([name for name,_ in wlan.calls].index("ifconfig"),
+                        [name for name,_ in wlan.calls].index("connect"))
+        self.assertNotIn(("active", False), wlan.calls)
+        # Reconnection only creates the listener; no HTTP GET or panel access exists in main.
+        self.assertNotIn("GET", (Path(__file__).resolve().parents[1] / "pico/main.py").read_text())
 
     def test_busy_timeout_is_finite(self):
         panel = panel_v4.Panel.__new__(panel_v4.Panel)

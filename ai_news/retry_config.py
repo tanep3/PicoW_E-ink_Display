@@ -54,8 +54,8 @@ def load_retry_config(path: Path | None = None) -> RetryConfig:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return RetryConfig()
-    if not isinstance(data, dict) or set(data) - {"news", "image"}:
-        raise ValueError("config supports only [news] and [image]")
+    if not isinstance(data, dict) or set(data) - {"news", "image", "push"}:
+        raise ValueError("config supports only [news], [image] and [push]")
 
     def section(name: str, default: RetryPolicy) -> RetryPolicy:
         values = data.get(name, {})

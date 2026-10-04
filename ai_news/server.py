@@ -16,6 +16,7 @@ from .archive import Archive, FRAME_ID, json_bytes, utcnow
 from .frame import WIRE_LENGTH
 from .gallery import DEMO_ID, month_view, day_view
 from .manual import ManualManager
+from .push import PushQueue, PushWorker
 from .topics import CONFIG_PATH, save_selected_topic, topic_snapshot
 
 
@@ -29,6 +30,7 @@ class FrameServer(ThreadingHTTPServer):
         self.allowed_network = ipaddress.ip_network(allowed_network, strict=False)
         self.rate = defaultdict(deque)
         self.manual = ManualManager(archive, config_path)
+        self.push_queue = PushQueue(archive)
         self.settings_lock = threading.Lock()
         super().__init__(address, Handler)
 
@@ -121,7 +123,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if len(str(self.headers)) > 4096:
                 raise ValueError("headers too large")
-            if "?" in self.path and not self.path.startswith("/gallery/api/"):
+            if "?" in self.path and not self.path.startswith(("/gallery/api/", "/v1/push/status?")):
                 raise ValueError("invalid query")
             self._allow_peer()
         except (ValueError, IndexError):
@@ -163,6 +165,17 @@ class Handler(BaseHTTPRequestHandler):
                 body = topic_snapshot(self.server.config_path)
                 self._web_send(200, json_bytes(body), "application/json")
                 return
+            if self.path == "/v1/push/status" or self.path.startswith("/v1/push/status?"):
+                url = urlsplit(self.path)
+                if url.query:
+                    query = parse_qs(url.query, strict_parsing=True)
+                    if set(query) != {"seq"} or len(query["seq"]) != 1 or not query["seq"][0].isdigit():
+                        raise ValueError("invalid PUSH sequence")
+                    seq = int(query["seq"][0])
+                else:
+                    seq = None
+                self._web_send(200, json_bytes(self.server.push_queue.status(seq)), "application/json")
+                return
             parts = self.path.split("/")
             if len(parts) == 4 and parts[:3] == ["", "v1", "frames"]:
                 name = parts[3]
@@ -185,7 +198,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(503, b"", "application/json")
 
     def do_POST(self):
-        if self.path not in ("/v1/generate", "/v1/topics"):
+        if self.path not in ("/v1/generate", "/v1/topics", "/v1/push"):
             self.send_error(405)
             self.close_connection = True
             return
@@ -195,7 +208,8 @@ class Handler(BaseHTTPRequestHandler):
             self._allow_peer()
             host, port = self.server.server_address[:2]
             expected = f"{host}:{port}"
-            action = "generate" if self.path == "/v1/generate" else "save-topic"
+            action = {"/v1/generate": "generate", "/v1/topics": "save-topic",
+                      "/v1/push": "push"}[self.path]
             if (self.headers.get("Host") != expected
                     or self.headers.get("Origin") != "http://" + expected
                     or self.headers.get("X-AI-News-Action") != action
@@ -216,6 +230,11 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("unexpected request fields")
                 status, started = self.server.manual.start()
                 self._web_send(202 if started else 409, json_bytes(status), "application/json")
+            elif action == "push":
+                if set(body) != {"source_id"} or not isinstance(body["source_id"], str):
+                    raise ValueError("invalid gallery selection")
+                queued = self.server.push_queue.enqueue(body["source_id"])
+                self._web_send(202, json_bytes(queued), "application/json")
             else:
                 if set(body) != {"topic_id"} or not isinstance(body["topic_id"], str):
                     raise ValueError("invalid topic selection")
@@ -235,7 +254,14 @@ def main():
     if not 1 <= port <= 65535 or port == 8080:
         raise SystemExit("AI_NEWS_PORT must be 1..65535 and cannot be 8080")
     server = FrameServer((host, port), Archive(root))
-    server.serve_forever(poll_interval=0.5)
+    stop = threading.Event()
+    worker = threading.Thread(target=PushWorker(server.push_queue).serve, args=(stop,), daemon=True)
+    worker.start()
+    try:
+        server.serve_forever(poll_interval=0.5)
+    finally:
+        stop.set()
+        worker.join(timeout=2)
 
 
 if __name__ == "__main__":

@@ -1,3 +1,5 @@
+> 本文に残るPico PULL手順は過去の運用記録です。現在は[PUSH設計・運用](PUSH_DESIGN_2026-10-04.md)に従って母艦からPicoへ送信します。旧転送コマンドをPicoへ再実行しないでください。
+
 # ローカル運用手順
 
 この文書は現行コードの導入と運用手順です。このraspi5ではHTTP user serviceを `192.168.0.120:16150` で運用し、毎時生成timerが稼働checkoutを読みます。実装前の設計との差分は[実装仕様](IMPLEMENTED_SPEC.md)、Picoの転送履歴は[転送記録](PICO_TRANSFER.md)を参照してください。
@@ -95,6 +97,10 @@ Pico上で確認したMicroPythonはv1.22.1です。SPI1とRST12/DC8/CS9/BUSY13�
 
 ## 障害と復旧
 
-題材選定または画像の全試行失敗時は前回latestを維持します。過去24時間内の公開出典URLは再採用しません。Picoは受信・長さ・hash検証失敗時にClearや描画をしません。描画開始後のBUSY/SPI失敗は表示不確定と扱い、連続更新しません。再起動でRAM表示状態が不明なら完全なRAWを再取得してfull更新します。
+題材選定または画像の全試行失敗時は前回latestを維持します。過去24時間内の公開出典URLは再採用しません。Picoは受信・長さ・hash検証失敗時にClearや描画をしません。描画開始後のBUSY/SPI失敗は表示不確定と扱い、連続更新しません。現行PUSH版は再起動だけでは画像を取得・描画せず、次に母艦から届いた新しい送信を検証してfull更新します。
 
 履歴のPNG/RAW/manifestは自動削除しません。旧版に戻す際は生成タイマーを止め、DBとlatestの整合バックアップを取って、実行物とschemaの互換性を確認してください。作品archiveを上書き・削除しないでください。
+
+## 現行PUSH版
+
+Picoは`192.168.0.172:16151`で待受し、母艦は履歴公開後にPOSTでRAW4000を送る。Git管理外の`pico/config.py`は`pico/config.sample.py`を見本に作成し、待受ポート、許可する母艦IP、固定IP、マスク、ゲートウェイ、DNSを定義する。固定IPはWi-Fi接続前に`wlan.ifconfig()`へ適用する。既存の`pico/secrets.py`は本人設定済みのWi-Fi情報として保護し、読み出し・上書きしない。実`config`の`[news]`と`[image]`、題材を維持し、`config.sample`と同じ`[push]`だけを加える。Pico本体・母艦HTTPサービス・毎時生成timerはPUSH版へ切替済みで、Web送信から描画完了ACKまで実機確認した。
