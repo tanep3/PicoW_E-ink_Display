@@ -50,6 +50,7 @@ class Archive:
         self.root.mkdir(parents=True, exist_ok=True)
         (self.root / "archive").mkdir(exist_ok=True)
         (self.root / "published").mkdir(exist_ok=True)
+        (self.root / "news").mkdir(exist_ok=True)
         self.db = self.root / "jobs.sqlite3"
         with self.connect() as conn:
             conn.executescript("""
@@ -60,6 +61,9 @@ class Archive:
                   dedup_key TEXT PRIMARY KEY, frame_id TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS published_frames (
                   frame_id TEXT PRIMARY KEY, published_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS stage_attempts (
+                  slot INTEGER NOT NULL, stage TEXT NOT NULL, attempts INTEGER NOT NULL,
+                  last_error TEXT NOT NULL DEFAULT '', PRIMARY KEY(slot, stage));
                 CREATE TABLE IF NOT EXISTS telemetry (
                   device_id TEXT NOT NULL, request_id TEXT NOT NULL, received_at TEXT NOT NULL,
                   payload TEXT NOT NULL, PRIMARY KEY(device_id, request_id));
@@ -110,7 +114,53 @@ class Archive:
         with self.connect() as conn:
             cursor = conn.execute("INSERT OR IGNORE INTO jobs(slot,state,updated_at) VALUES(?,?,?)",
                                   (slot, "COLLECTING", utcnow()))
-            return cursor.rowcount == 1
+            if cursor.rowcount == 1:
+                return True
+            row = conn.execute("SELECT state FROM jobs WHERE slot=?", (slot,)).fetchone()
+            # A process interrupted mid-job can resume; completed jobs stay final.
+            return row is not None and row[0] in (
+                "COLLECTING", "SELECTED", "GENERATING", "VALIDATED")
+
+    def save_news(self, slot: int, news: dict) -> None:
+        path = self.root / "news" / (str(slot) + ".json")
+        data = json_bytes(news)
+        if path.exists():
+            if path.read_bytes() != data:
+                raise ValueError("saved news differs from current selection")
+            return
+        atomic_write(path, data)
+
+    def load_news(self, slot: int) -> dict | None:
+        path = self.root / "news" / (str(slot) + ".json")
+        return json.loads(path.read_bytes()) if path.exists() else None
+
+    def attempt_info(self, slot: int, stage: str) -> tuple[int, str]:
+        if stage not in ("news", "image"):
+            raise ValueError("unknown stage")
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT attempts,last_error FROM stage_attempts WHERE slot=? AND stage=?",
+                (slot, stage)).fetchone()
+            return (row[0], row[1]) if row else (0, "")
+
+    def begin_attempt(self, slot: int, stage: str) -> None:
+        if stage not in ("news", "image"):
+            raise ValueError("unknown stage")
+        with self.connect() as conn:
+            conn.execute("""INSERT INTO stage_attempts(slot,stage,attempts) VALUES(?,?,1)
+                ON CONFLICT(slot,stage) DO UPDATE SET attempts=attempts+1""", (slot, stage))
+
+    def attempt_failed(self, slot: int, stage: str, reason: str) -> None:
+        with self.connect() as conn:
+            conn.execute("UPDATE stage_attempts SET last_error=? WHERE slot=? AND stage=?",
+                         (reason[:200], slot, stage))
+
+    def latest_is_job(self, slot: int) -> bool:
+        latest = self.latest()
+        if not latest:
+            return False
+        record = json.loads(self.frame_path(latest["frame_id"], "json").read_text())
+        return record.get("metadata", {}).get("job_slot") == slot
 
     def state(self, slot: int, state: str, reason: str = "") -> None:
         with self.connect() as conn:
@@ -130,7 +180,7 @@ class Archive:
             raise ValueError("invalid frame path")
         return self.root / "archive" / frame_id / ("frame." + suffix)
 
-    def publish(self, png: bytes, metadata: dict, dedup_key: str) -> dict:
+    def publish(self, png: bytes, metadata: dict, dedup_key: str | None = None) -> dict:
         self.reconcile_latest()
         wire = png_to_wire(png)
         png_hash, wire_hash = sha256(png), sha256(wire)
@@ -165,5 +215,6 @@ class Archive:
         with self.connect() as conn:
             conn.execute("INSERT OR IGNORE INTO published_frames VALUES(?,?)",
                          (frame_id, latest["published_at"]))
-            conn.execute("INSERT OR IGNORE INTO seen VALUES(?,?)", (dedup_key, frame_id))
+            if dedup_key:
+                conn.execute("INSERT OR IGNORE INTO seen VALUES(?,?)", (dedup_key, frame_id))
         return latest

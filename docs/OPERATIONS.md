@@ -1,6 +1,6 @@
 # ローカル運用手順
 
-この文書は現在のコードに基づく運用手順です。HTTP user serviceは `192.168.0.120:16150` で起動・有効化済みです。毎時生成timerを有効化し、Pico新 `main.py` に切り替えました。実装前の設計との差分は[実装仕様](IMPLEMENTED_SPEC.md)、転送の履歴は[転送記録](PICO_TRANSFER.md)を参照してください。
+この文書はこのコードに基づく運用手順です。HTTP user serviceは `192.168.0.120:16150` で起動・有効化済みです。毎時生成timerは稼働checkoutを直接読みます。Pico新 `main.py` は今回変更しません。実装前の設計との差分は[実装仕様](IMPLEMENTED_SPEC.md)、転送の履歴は[転送記録](PICO_TRANSFER.md)を参照してください。
 
 ## 依存と単体テスト
 
@@ -18,11 +18,13 @@ python3 -m unittest discover -s tests -v
 
 生成ジョブ `python3 -m ai_news.generator` は既定でCodexヘッドレスGPT-6-Lunaの画像ツールを使い、実PNGを検証して保存します。Codex CLI 0.160.0で単発画像生成と、一時領域でニュース調査から履歴公開までの通し試験1回を確認しました。継続稼働と利用枠は未検証です。`AI_NEWS_IMAGE_COMMAND` で明示指定する別コマンド方式もあり、`--capabilities` と `--generate PROMPT_JSON OUTPUT_PNG` を要求します。画像が実在し、PNG/RAW検証を通るまで公開しません。外部有料APIへ自動切替しません。
 
-一次出典に公開日しかない場合、`source_published_at` は `YYYY-MM-DD` のまま保存し、`source_date_precision` を `date` とします。時刻とタイムゾーンを推測しません。一次出典とHN投稿日時は別に記録します。
+ニュース調査はWeb全体を対象とし、1回目の必須成果は公開出典URLと裏付けのある要約または本文です。過去24時間という条件はCodexの調査指示で判断し、日付の必須出力やコード上の時間判定は行いません。調査成果は `state/news/<UTC slot>.json` に保存され、画像段階だけを再開できます。画像段階はその保存文章と出典URLから風刺画を作ります。画像失敗時に同slotのニュース選定を繰り返しません。
+
+ルート`config`はTOMLです。[config.sample](../config.sample)と同じ値を配置できます。`[news]`と`[image]`の`retry_count=2`は初回を除くため各段階最大3試行です。`interval_seconds=0`は即時再試行、`deadline_seconds=0`は追加の段階上限なしを意味します。`attempt_timeout_seconds`は1試行あたりニュース180秒、画像300秒で、正の整数です。他の項目は負でない整数です。既存の`config`があれば意図しない上書きをしません。ファイルはGit管理外です。すべての試行が制限までかかる場合はニュース9分＋画像15分＝24分で、画像能力確認は最大約45秒です。service全体は30分のままで、その他の処理時間・設定による待機が増えれば最大試行数より前に止まり得ます。処理中断からの再開では消費済み試行回数を使い、設定した段階の経過時間上限は再起動後に計り直します。
 
 `python3 -m ai_news.server` は保存済み画像だけを配信します。GETで生成はしません。配信 `/v1/latest`、不変RAW/PNG、status、閲覧画面 `/` と `/gallery/` は同じ設定ポートです。閲覧とPico取得に追加のアプリ認証はありません。
 
-user unitテンプレートは `systemd/` にあります。HTTP serviceと生成timerはこのraspi5の開発パスと状態ディレクトリで導入済みです。`systemctl --user status ai-news-http.service ai-news-generate.timer` と `systemctl --user list-timers ai-news-generate.timer` で状態を確認できます。timerは毎時00分、`Persistent=false` です。生成サービスは30分の起動期限、各UTC時間スロットの冪等処理、排他ロックを備えます。Codex画像を照合できない場合は同じニュースで最大1回だけ再試行します。実際の定時結果は `journalctl --user -u ai-news-generate.service` と `state/jobs.sqlite3` で確認します。
+user unitテンプレートは `systemd/` にあります。HTTP serviceと生成timerはこのraspi5の開発パスと状態ディレクトリで導入済みです。`systemctl --user status ai-news-http.service ai-news-generate.timer` と `systemctl --user list-timers ai-news-generate.timer` で状態を確認できます。timerは毎時00分、`Persistent=false` です。生成サービスは30分の起動期限、各UTC時間スロットの記録、排他ロックを備えます。調査と画像の各段階は、必要な成果物がない場合に既定で最大2回再試行します。実際の定時結果は `journalctl --user -u ai-news-generate.service` と `state/jobs.sqlite3` で確認します。
 
 ## Pico
 
@@ -32,6 +34,6 @@ Pico上で確認したMicroPythonはv1.22.1です。SPI1とRST12/DC8/CS9/BUSY13�
 
 ## 障害と復旧
 
-生成失敗・候補なし・同一ニュースでは前回latestを維持します。Picoは受信・長さ・hash検証失敗時にClearや描画をしません。描画開始後のBUSY/SPI失敗は表示不確定と扱い、連続更新しません。再起動でRAM表示状態が不明なら完全なRAWを再取得してfull更新します。
+ニュースまたは画像の全試行失敗時は前回latestを維持します。同じニュースの再採用は許容し、新たな画像生成を呼びます。Picoは受信・長さ・hash検証失敗時にClearや描画をしません。描画開始後のBUSY/SPI失敗は表示不確定と扱い、連続更新しません。再起動でRAM表示状態が不明なら完全なRAWを再取得してfull更新します。
 
 履歴のPNG/RAW/manifestは自動削除しません。旧版に戻す際は生成タイマーを止め、DBとlatestの整合バックアップを取って、実行物とschemaの互換性を確認してください。作品archiveを上書き・削除しないでください。

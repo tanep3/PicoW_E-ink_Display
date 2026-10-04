@@ -60,99 +60,44 @@ class FrameTests(unittest.TestCase):
 
 
 class ArchiveTests(unittest.TestCase):
-    def test_codex_image_backend_uses_real_generated_path(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            generated_root = root / "generated_images"
-            output = generated_root / "run" / "image.png"
-            backend = generator.CodexImageBackend(generated_root)
+    NEWS = {"source_url": "https://example.com/story", "summary": "A sourced AI news story"}
 
-            def fake_run(*args, **kwargs):
-                output.parent.mkdir(parents=True, exist_ok=True)
-                output.write_bytes(source_png())
-                return types.SimpleNamespace(stderr=("image_gen__imagegen output_hint: " +
-                    str(output) + " by default").encode())
-
-            story = {"facts": ["fact"], "source_url": "https://example.com",
-                     "satirical_metaphor": "a scale", "visual_composition": "one scene",
-                     "forbidden_claims": []}
-            with patch.object(generator.shutil, "which", return_value="/usr/bin/codex"), \
-                 patch.object(generator.subprocess, "run", side_effect=fake_run):
-                self.assertEqual(source_png(), backend.generate(story, root))
-
-    def test_codex_image_backend_correlates_new_session_directory(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            generated = root / "generated_images"
-            generated.mkdir()
-            (generated / "older").mkdir()
-            backend = generator.CodexImageBackend(generated)
-
-            def fake_run(*args, **kwargs):
-                output = generated / "new-session" / "image.png"
-                output.parent.mkdir()
-                output.write_bytes(source_png())
-                return types.SimpleNamespace(stderr=b"image_gen__imagegen completed")
-
-            story = {"facts": ["fact"], "source_url": "https://example.com",
-                     "satirical_metaphor": "a scale", "visual_composition": "one scene",
-                     "forbidden_claims": []}
-            with patch.object(generator.shutil, "which", return_value="/usr/bin/codex"), \
-                 patch.object(generator.subprocess, "run", side_effect=fake_run):
-                self.assertEqual(source_png(), backend.generate(story, root))
-
-    def test_codex_image_backend_accepts_verified_message_path_without_tool_log(self):
+    def test_codex_image_backend_accepts_new_png_path_without_tool_marker(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             generated = root / "generated_images"
             output = generated / "new-session" / "image.png"
             backend = generator.CodexImageBackend(generated)
-            calls = []
 
             def fake_run(command, **kwargs):
-                calls.append(command)
                 output.parent.mkdir(parents=True)
                 output.write_bytes(source_png())
                 Path(command[command.index("--output-last-message") + 1]).write_text(str(output))
-                return types.SimpleNamespace(stderr=b"Codex completed without a tool name")
+                return types.SimpleNamespace(stderr=b"no tool marker", returncode=1)
 
-            story = {"facts": ["fact"], "source_url": "https://example.com",
-                     "satirical_metaphor": "a scale", "visual_composition": "one scene",
-                     "forbidden_claims": []}
             with patch.object(generator.shutil, "which", return_value="/usr/bin/codex"), \
                  patch.object(generator.subprocess, "run", side_effect=fake_run):
-                self.assertEqual(source_png(), backend.generate(story, root))
-            self.assertEqual(1, len(calls))
+                self.assertEqual(source_png(), backend.generate(self.NEWS, root))
 
-    def test_codex_image_backend_retries_missing_output_once(self):
+    def test_codex_image_backend_rejects_stale_and_unattributed_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             generated = root / "generated_images"
-            output = generated / "second-session" / "image.png"
+            stale = generated / "old-session" / "image.png"
+            stale.parent.mkdir(parents=True)
+            stale.write_bytes(source_png())
             backend = generator.CodexImageBackend(generated)
-            calls = []
 
             def fake_run(command, **kwargs):
-                calls.append(command)
-                if len(calls) == 2:
-                    output.parent.mkdir(parents=True)
-                    output.write_bytes(source_png())
-                    Path(command[command.index("--output-last-message") + 1]).write_text(str(output))
-                return types.SimpleNamespace(stderr=b"no tool marker")
+                Path(command[command.index("--output-last-message") + 1]).write_text(str(stale))
+                (generated / "unrelated-session").mkdir()
+                (generated / "unrelated-session" / "image.png").write_bytes(source_png())
+                return types.SimpleNamespace(stderr=b"image_gen__imagegen completed", returncode=0)
 
-            story = {"facts": ["fact"], "source_url": "https://example.com",
-                     "satirical_metaphor": "a scale", "visual_composition": "one scene",
-                     "forbidden_claims": []}
             with patch.object(generator.shutil, "which", return_value="/usr/bin/codex"), \
                  patch.object(generator.subprocess, "run", side_effect=fake_run):
-                self.assertEqual(source_png(), backend.generate(story, root))
-            self.assertEqual(2, len(calls))
-
-            with patch.object(generator.shutil, "which", return_value="/usr/bin/codex"), \
-                 patch.object(generator.subprocess, "run", return_value=types.SimpleNamespace(stderr=b"")) as run:
-                with self.assertRaisesRegex(RuntimeError, "after 2 attempts"):
-                    backend.generate(story, root)
-                self.assertEqual(2, run.call_count)
+                with self.assertRaisesRegex(RuntimeError, "no attributable PNG"):
+                    backend.generate(self.NEWS, root)
 
     def test_publish_and_failed_switch_preserves_latest(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -177,51 +122,214 @@ class ArchiveTests(unittest.TestCase):
             self.assertEqual(one, store.latest())
             self.assertEqual(1, len(list(gallery.entries(store))))
 
-    def test_slot_unique_and_image_gate(self):
+    def test_image_gate_precedes_news(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            called = []
             with self.assertRaises(RuntimeError):
-                generator.run_once(root, generator.CommandImageBackend(""),
-                                   now=datetime(2026, 10, 3, 0, tzinfo=timezone.utc), candidates=[])
-            store = archive.Archive(root)
+                generator.run_once(Path(tmp), generator.CommandImageBackend(""),
+                                   now=datetime(2026, 10, 3, 0, tzinfo=timezone.utc),
+                                   news_fetcher=lambda *args: called.append(1))
+            self.assertEqual([], called)
+            store = archive.Archive(Path(tmp))
             with store.connect() as db:
                 self.assertEqual("FAILED", db.execute("SELECT state FROM jobs").fetchone()[0])
             self.assertIsNone(store.latest())
 
-    def test_generation_publish_and_duplicate_event_skip(self):
+    def test_three_attempt_boundary_and_feedback(self):
         class Backend:
-            calls = 0
+            def __init__(self): self.calls = []
+            def probe(self): return {"schema_version": 1, "output_png": True}
+            def generate(self, news, work, *, feedback, timeout):
+                self.calls.append((news, feedback, work, timeout))
+                return b"\x89PNG\r\n\x1a\nbroken" if len(self.calls) < 3 else source_png()
 
-            def probe(self):
-                return {"schema_version": 1, "output_png": True}
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(generator, "public_url", side_effect=lambda url: url):
+            root = Path(tmp)
+            news_calls = []
+            def news_fetcher(work, now, timeout, feedback):
+                news_calls.append((feedback, timeout))
+                return {"source_url": None, "summary": None} if len(news_calls) < 3 else self.NEWS
+            backend = Backend()
+            now = datetime(2026, 10, 3, 1, tzinfo=timezone.utc)
+            self.assertEqual("published", generator.run_once(root, backend, now=now,
+                                                             news_fetcher=news_fetcher))
+            store = archive.Archive(root)
+            self.assertEqual(3, store.attempt_info(int(now.timestamp()) // 3600, "news")[0])
+            self.assertEqual(3, store.attempt_info(int(now.timestamp()) // 3600, "image")[0])
+            self.assertEqual(3, len(news_calls))
+            self.assertEqual(3, len(backend.calls))
+            self.assertTrue(news_calls[1][0])
+            self.assertTrue(backend.calls[1][1])
+            self.assertEqual([180] * 3, [item[1] for item in news_calls])
+            self.assertEqual([300] * 3, [item[3] for item in backend.calls])
+            self.assertEqual(3, len({str(item[2]) for item in backend.calls}))
+            self.assertEqual(self.NEWS, store.load_news(int(now.timestamp()) // 3600))
+            latest = store.latest()
+            record = json.loads(store.frame_path(latest["frame_id"], "json").read_text())
+            self.assertEqual([self.NEWS["source_url"]], record["metadata"]["source_urls"])
+            self.assertEqual(self.NEWS["summary"], record["metadata"]["news_summary"])
+            self.assertEqual(4000, store.frame_path(latest["frame_id"], "raw").stat().st_size)
 
-            def generate(self, story, work):
-                self.calls += 1
-                return source_png()
-
-        candidate = {"hn_id": 42, "title": "AI story", "url": "https://example.com/story"}
-        def editorial(*args):
-            return {"outcome": "selected", "reason": "verified", "story": {
-                "hn_id": 42, "source_url": candidate["url"],
-                "source_published_at": "2026-10-03",
-                "event_key": "same-event", "facts": ["A verified fact"],
-                "fact_summary": "summary", "satirical_metaphor": "a scale",
-                "visual_composition": "one scene", "forbidden_claims": []}}
-        with tempfile.TemporaryDirectory() as tmp, patch.object(generator, "public_url", side_effect=lambda url: url):
-            root, backend = Path(tmp), Backend()
-            first = datetime(2026, 10, 3, 1, tzinfo=timezone.utc)
-            self.assertEqual("published", generator.run_once(root, backend, now=first,
-                                                               candidates=[candidate], editorial=editorial))
-            latest = archive.Archive(root).latest()
-            self.assertEqual(1, latest["publish_seq"])
-            record = json.loads(archive.Archive(root).frame_path(latest["frame_id"], "json").read_text())
-            self.assertEqual("date", record["metadata"]["source_date_precision"])
-            self.assertEqual("2026-10-03", record["metadata"]["source_published_at"])
-            self.assertEqual("skipped", generator.run_once(root, backend,
-                                now=datetime(2026, 10, 3, 2, tzinfo=timezone.utc),
-                                candidates=[candidate], editorial=editorial))
-            self.assertEqual(1, backend.calls)
+    def test_news_exhaustion_preserves_old_latest(self):
+        class Backend:
+            def probe(self): return {"schema_version": 1, "output_png": True}
+            def generate(self, *args, **kwargs): raise AssertionError("no image without news")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = archive.Archive(root)
+            latest = store.publish(frame.normalize(source_png()), {"title": "old"})
+            calls = []
+            def missing(*args):
+                calls.append(1)
+                return {"source_url": None, "summary": None}
+            now = datetime(2026, 10, 3, 2, tzinfo=timezone.utc)
+            with self.assertRaises(ValueError):
+                generator.run_once(root, Backend(), now=now, news_fetcher=missing)
+            self.assertEqual(3, len(calls))
+            self.assertEqual(3, archive.Archive(root).attempt_info(int(now.timestamp()) // 3600, "news")[0])
             self.assertEqual(latest, archive.Archive(root).latest())
+
+    def test_image_exhaustion_preserves_old_latest_and_saved_news(self):
+        class Backend:
+            def __init__(self): self.calls = 0
+            def probe(self): return {"schema_version": 1, "output_png": True}
+            def generate(self, *args, **kwargs):
+                self.calls += 1
+                return b"\x89PNG\r\n\x1a\nbroken"
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(generator, "public_url", side_effect=lambda url: url):
+            root = Path(tmp)
+            store = archive.Archive(root)
+            latest = store.publish(frame.normalize(source_png()), {"title": "old"})
+            backend = Backend()
+            now = datetime(2026, 10, 3, 3, tzinfo=timezone.utc)
+            with self.assertRaises(Exception):
+                generator.run_once(root, backend, now=now,
+                                   news_fetcher=lambda *args: self.NEWS)
+            slot = int(now.timestamp()) // 3600
+            self.assertEqual(3, backend.calls)
+            self.assertEqual(1, archive.Archive(root).attempt_info(slot, "news")[0])
+            self.assertEqual(3, archive.Archive(root).attempt_info(slot, "image")[0])
+            self.assertEqual(self.NEWS, archive.Archive(root).load_news(slot))
+            self.assertEqual(latest, archive.Archive(root).latest())
+
+    def test_resume_after_crash_reuses_news_and_remaining_image_attempts(self):
+        class Backend:
+            def __init__(self): self.calls = 0
+            def probe(self): return {"schema_version": 1, "output_png": True}
+            def generate(self, *args, **kwargs):
+                self.calls += 1
+                if self.calls == 1: raise KeyboardInterrupt()
+                return source_png()
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(generator, "public_url", side_effect=lambda url: url):
+            root, backend = Path(tmp), Backend()
+            now = datetime(2026, 10, 3, 4, tzinfo=timezone.utc)
+            calls = []
+            def news(*args):
+                calls.append(1)
+                return self.NEWS
+            with self.assertRaises(KeyboardInterrupt):
+                generator.run_once(root, backend, now=now, news_fetcher=news)
+            self.assertEqual("published", generator.run_once(
+                root, backend, now=now,
+                news_fetcher=lambda *args: self.fail("news must not be re-fetched")))
+            slot = int(now.timestamp()) // 3600
+            self.assertEqual([1], calls)
+            self.assertEqual(1, archive.Archive(root).attempt_info(slot, "news")[0])
+            self.assertEqual(2, archive.Archive(root).attempt_info(slot, "image")[0])
+            self.assertIsNotNone(archive.Archive(root).latest())
+
+    def test_no_date_and_same_article_can_publish_twice(self):
+        class Backend:
+            def __init__(self): self.calls = 0
+            def probe(self): return {"schema_version": 1, "output_png": True}
+            def generate(self, *args, **kwargs):
+                self.calls += 1
+                img = Image.new("L", (250, 122), 255)
+                img.putpixel((self.calls, 20), 0)
+                buf = BytesIO(); img.save(buf, "PNG")
+                return buf.getvalue()
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(generator, "public_url", side_effect=lambda url: url):
+            root, backend = Path(tmp), Backend()
+            fetch = lambda *args: self.NEWS
+            first = datetime(2026, 10, 3, 5, tzinfo=timezone.utc)
+            self.assertEqual("published", generator.run_once(root, backend, now=first,
+                                                             news_fetcher=fetch))
+            self.assertEqual("published", generator.run_once(root, backend,
+                                now=datetime(2026, 10, 3, 6, tzinfo=timezone.utc),
+                                news_fetcher=fetch))
+            store = archive.Archive(root)
+            self.assertEqual(2, store.latest()["publish_seq"])
+            self.assertEqual(2, backend.calls)
+            self.assertEqual(2, len(list(gallery.entries(store))))
+            self.assertEqual("already attempted", generator.run_once(
+                root, backend, now=first, news_fetcher=fetch))
+
+    def test_config_defaults_and_bad_values(self):
+        from ai_news.retry_config import load_retry_config
+        import tomllib
+        sample = tomllib.loads((Path(__file__).resolve().parents[1] / "config.sample").read_text())
+        self.assertEqual(2, sample["news"]["retry_count"])
+        self.assertEqual(2, sample["image"]["retry_count"])
+        self.assertEqual(180, sample["news"]["attempt_timeout_seconds"])
+        self.assertEqual(300, sample["image"]["attempt_timeout_seconds"])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config"
+            self.assertEqual((2, 2), (load_retry_config(path).news.retry_count,
+                                      load_retry_config(path).image.retry_count))
+            self.assertEqual((180, 300), (
+                load_retry_config(path).news.attempt_timeout_seconds,
+                load_retry_config(path).image.attempt_timeout_seconds))
+            for bad in ("[news]\nretry_count=-1\n", "[image]\nretry_count=true\n",
+                        "[news]\nretry_count='2'\n", "[unknown]\nretry_count=2\n",
+                        "[news]\nattempt_timeout_seconds=0\n",
+                        "[image]\nattempt_timeout_seconds=true\n"):
+                path.write_text(bad)
+                with self.assertRaises(ValueError):
+                    load_retry_config(path)
+            path.write_text("[news]\nretry_count=0\ninterval_seconds=3\n"
+                            "deadline_seconds=5\nattempt_timeout_seconds=7\n")
+            config = load_retry_config(path)
+            self.assertEqual((0, 3, 5, 7), (config.news.retry_count,
+                                        config.news.interval_seconds,
+                                        config.news.deadline_seconds,
+                                        config.news.attempt_timeout_seconds))
+
+    def test_news_prompt_is_web_wide_and_requires_no_date_field(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            commands = []
+            def fake_run(command, **kwargs):
+                commands.append((command, kwargs))
+                Path(command[command.index("--output-last-message") + 1]).write_text(
+                    json.dumps(self.NEWS))
+                return types.SimpleNamespace(returncode=1)
+            with patch.object(generator.shutil, "which", return_value="/usr/bin/codex"), \
+                 patch.object(generator.subprocess, "run", side_effect=fake_run):
+                result = generator.codex_editor(work, datetime(2026, 10, 3, tzinfo=timezone.utc))
+            self.assertEqual(self.NEWS, result)
+            prompt = commands[0][0][-1]
+            self.assertEqual(180, commands[0][1]["timeout"])
+            self.assertIn("24時間以内", prompt)
+            self.assertIn("Hacker Newsに限定しません", prompt)
+            schema = json.loads((work / "news-schema.json").read_text())
+            self.assertEqual(["source_url", "summary"], schema["required"])
+
+    def test_any_public_source_url_is_allowed_without_hn_match(self):
+        addresses = [(2, 1, 6, "", ("93.184.215.14", 443))]
+        with patch.object(generator.socket, "getaddrinfo", return_value=addresses):
+            news = generator.validate_news({
+                "source_url": "https://EXAMPLE.com/story?edition=1#intro",
+                "summary": "  News supported by this source.  "})
+        self.assertEqual("https://example.com/story?edition=1", news["source_url"])
+        self.assertEqual("News supported by this source.", news["summary"])
+        with patch.object(generator.socket, "getaddrinfo",
+                          return_value=[(2, 1, 6, "", ("127.0.0.1", 443))]):
+            with self.assertRaises(ValueError):
+                generator.validate_news(self.NEWS)
 
 
 class IntegrityTests(unittest.TestCase):

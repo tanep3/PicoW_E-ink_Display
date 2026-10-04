@@ -1,0 +1,18 @@
+# TOML example. Copy to ./config to override these defaults.
+# retry_count excludes the first attempt. deadline_seconds=0 disables the
+# additional stage deadline; subprocess and systemd timeouts still apply.
+# attempt_timeout_seconds is the timeout for each Codex invocation.
+
+[news]
+# Headless Codex web research: source URL and nonempty summary/body are required.
+retry_count = 2
+interval_seconds = 0
+deadline_seconds = 0
+attempt_timeout_seconds = 180
+
+[image]
+# Image generation and PNG decoding. No other model or paid API is selected.
+retry_count = 2
+interval_seconds = 0
+deadline_seconds = 0
+attempt_timeout_seconds = 300
