@@ -1,10 +1,57 @@
 # ローカル運用手順
 
-この文書はこのコードに基づく運用手順です。HTTP user serviceは `192.168.0.120:16150` で起動・有効化済みです。毎時生成timerは稼働checkoutを直接読みます。Pico新 `main.py` は今回変更しません。実装前の設計との差分は[実装仕様](IMPLEMENTED_SPEC.md)、転送の履歴は[転送記録](PICO_TRANSFER.md)を参照してください。
+この文書は現行コードの導入と運用手順です。このraspi5ではHTTP user serviceを `192.168.0.120:16150` で運用し、毎時生成timerが稼働checkoutを読みます。実装前の設計との差分は[実装仕様](IMPLEMENTED_SPEC.md)、Picoの転送履歴は[転送記録](PICO_TRANSFER.md)を参照してください。
+
+## 新しい環境への初期導入
+
+以下は新規導入用です。既に動いている母艦やPicoの設定ファイルを、再導入のために上書きしないでください。母艦にはPython 3.11以降と認証済みのCodex CLIが必要です。Codexのヘッドレス実行で`gpt-6-luna`のWeb調査と画像生成を使えることが前提です。画像生成能力はジョブ自身が確認し、利用不可なら公開しません。
+
+リポジトリ直下でPython依存を用意します。`config`は任意で、初期値を変える場合だけサンプルから作成します。
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+cp -n config.sample config
+```
+
+母艦とPicoが同じLANにいることを確認し、母艦のLANアドレスを決めます。現行のHTTPコードは送信元を`192.168.0.0/24`に限定します。この範囲以外で使うには`ai_news/server.py`の許可範囲も変更する必要があります。HTTPの既定ポートは16150です。
+
+`systemd/`の3つのunitを`~/.config/systemd/user/`へコピーし、コピー先の次の値を導入先に合わせて編集します。
+
+- 両serviceの`WorkingDirectory`と`AI_NEWS_STATE`を実際のcheckoutと保存先の絶対パスにする。履歴を残す`state/`はGit管理外です。
+- 両serviceの`ExecStart`を使用するPythonの絶対パスにする。上記venvを使うなら`<checkout>/.venv/bin/python -m ai_news.server`または`-m ai_news.generator`です。
+- HTTP serviceの`AI_NEWS_BIND`を母艦のLANアドレスにする。ポートを変える場合は`AI_NEWS_PORT`も変更する。
+- 生成serviceの`PATH`に認証済み`codex`コマンドのディレクトリを含める。user serviceの実行ユーザーでCodexが使える必要があります。
+
+コピー先を編集した後に有効化します。生成timerは毎時00分に起動し、取り逃した回を遡って実行しません。
+
+```bash
+mkdir -p "$HOME/.config/systemd/user"
+cp systemd/ai-news-http.service systemd/ai-news-generate.service systemd/ai-news-generate.timer "$HOME/.config/systemd/user/"
+# コピー先のunitを編集してから:
+systemctl --user daemon-reload
+systemctl --user enable --now ai-news-http.service ai-news-generate.timer
+```
+
+最初の絵を今作りたい場合は`systemctl --user start ai-news-generate.service`を実行します。user systemdがログアウト後も動く設定かも確認してください。稼働と生成結果は後述の`systemctl --user`、`journalctl --user`、ブラウザの`http://<母艦のLANアドレス>:16150/`で確認します。
+
+Pico WにはWaveshare Pico-ePaper-2.13 V4とMicroPythonを用意します。母艦のURLに合わせて`pico/config.py`の`HOST`と`PORT`を編集し、`pico/secrets.example.py`からGit管理外の`pico/secrets.py`を作ってWi-Fiの2項目を入力します。既存のPicoプログラムと秘密ファイルは先に別の場所へ退避してください。転送ツールの一例は`mpremote`です。接続ポートは各環境のUSBシリアルポートに置き換えます。
+
+```bash
+.venv/bin/python -m pip install mpremote
+PICO_PORT=/dev/ttyACM0
+.venv/bin/mpremote connect "$PICO_PORT" fs cp pico/protocol.py :protocol.py
+.venv/bin/mpremote connect "$PICO_PORT" fs cp pico/panel_v4.py :panel_v4.py
+.venv/bin/mpremote connect "$PICO_PORT" fs cp pico/config.py :config.py
+.venv/bin/mpremote connect "$PICO_PORT" fs cp pico/secrets.py :secrets.py
+.venv/bin/mpremote connect "$PICO_PORT" fs cp pico/main.py :main.py
+```
+
+`main.py`を最後に転送し、Picoを再起動します。起動直後に最新版を取得・検証してから描画し、以後は毎時20分ごろに確認します。描画後はUSB操作ができる状態で約3分待ってから省電力待機へ入ります。Picoへの実際の転送と実機確認の履歴は[転送記録](PICO_TRANSFER.md)を参照してください。
 
 ## 依存と単体テスト
 
-Python 3とPillowが必要です。依存は `requirements.txt` を参照してください。リポジトリ直下から次を実行します。
+Python 3.11以降とPillowが必要です。依存は `requirements.txt` を参照してください。リポジトリ直下から次を実行します。
 
 ```bash
 python3 -m unittest discover -s tests -v
