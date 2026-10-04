@@ -13,7 +13,7 @@
 - ルートのTOML`config`は各生成ジョブで1回読み込みます。`[news].selected_topic_id`は安定IDで、`[[news.topics]]`のID・表示名・本文を読んで題材を選びます。選択中IDが消えたら自動で別候補に切り替えず、生成を開始しません。実行中ジョブの途中では設定を再読込しません。設定候補は[config.sample](../config.sample)を参照してください。
 - 生成画像をPillowで250×122の1bit PNGに正本化し、物理122×250、stride16、MSB先、白1・黒0、行末padding白のRAW4000へ変換します。PNG、RAW、メタデータを `state/archive/<frame_id>/` に永続保存し、`state/published/latest.json` をatomic writeで切り替えます。フレームJSONには出典URL、ニュース文章、ジョブ開始時刻、モデル・バックエンド・変換情報を残します。以前のメタデータを持つ履歴はそのまま閲覧できます。`state/` はGit管理外です。
 - HTTPは `ai-news-http.service` が `192.168.0.120:16150` にbindし、LAN `192.168.0.0/24` の送信元だけを受け付けます。`GET /v1/latest`、`/v1/frames/<frame_id>.raw`、`.png`、`/v1/status`、ギャラリーを配信します。`/v1/status` は `has_frame`、`frame_id`、`server_time` だけを返し、生成ジョブの状態は返しません。手動生成・設定保存以外のPOSTは405です。GETで生成は開始しません。
-- Web手動生成は明示的な`POST /v1/generate`で別プロセスを起動し、`GET /v1/generate/status`で安全な状態だけを返します。GETで生成は開始しません。手動ジョブも同じ生成ロック、題材・再試行・URL除外、保存・公開処理を使い、タイマーとの同時生成を防ぎます。毎時枠が未使用ならそこを使い、使用済みなら負の専用slotを使うため、手動操作で同時間内に追加作品を作れます。別の生成が進行中なら待ち行列には入れません。進行状態は`state/manual_status.json`に保存します。
+- Web手動生成は明示的な`POST /v1/generate`で別プロセスを起動し、`GET /v1/generate/status`で安全な状態だけを返します。GETで生成は開始しません。手動ジョブも同じ生成ロック、題材・再試行・URL除外、保存・公開処理を使い、タイマーとの同時生成を防ぎます。手動ジョブは常に負の専用slotを使い、同じ時間の毎時slotを消費しません。別の生成が進行中なら待ち行列には入れません。進行状態は`state/manual_status.json`に保存します。
 - 題材の設定画面`/settings/`は`GET /v1/topics`でconfigから取得した候補を表示し、`POST /v1/topics`で実`config`の`[news].selected_topic_id`だけを原子的に保存します。`config.sample`は初期例です。直接編集した実`config`も同じ読込経路を使い、次の手動・毎時ジョブから反映します。実行中ジョブの設定は変えません。書込みPOSTはLAN制限のほか、正確なHost・Origin、同一originのFetch Metadata、専用ヘッダー、JSON本文を要求します。アプリ認証キーは追加しません。
 - アプリの追加認証キー、HMAC署名、telemetry APIは実装していません。HTTPとSHA-256は通信相手の真正性を保証しません。Picoは受信長・形式・SHA-256・RAW paddingを検証します。母艦はLAN専用の構成ですが、OS firewall等の設定変更は行っていません。
 

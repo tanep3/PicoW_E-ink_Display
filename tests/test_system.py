@@ -455,7 +455,40 @@ class ArchiveTests(unittest.TestCase):
                              [item[0] for item in chosen])
             self.assertIn("https://example.com/1", chosen[1][1])
 
-    def test_manual_uses_hourly_slot_then_a_new_slot_without_overlap(self):
+    def test_manual_uses_separate_slots_after_hourly_job_without_overlap(self):
+        class Backend:
+            def __init__(self): self.calls = 0
+            def probe(self): return {"schema_version": 1, "output_png": True}
+            def generate(self, *args, **kwargs):
+                self.calls += 1
+                image = Image.new("L", (250, 122), 255)
+                image.putpixel((self.calls, 10), 0)
+                buf = BytesIO(); image.save(buf, "PNG")
+                return buf.getvalue()
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(generator, "public_url", side_effect=lambda url: url):
+            root, backend = Path(tmp), Backend()
+            now = datetime(2026, 10, 3, 8, tzinfo=timezone.utc)
+            calls = []
+            def fetch(*args):
+                calls.append(1)
+                return {**self.NEWS, "source_url": "https://example.com/" + str(len(calls))}
+            self.assertEqual("published", generator.run_once(root, backend, now=now,
+                                                             news_fetcher=fetch))
+            self.assertEqual("published", generator.run_once(root, backend, now=now,
+                                                             news_fetcher=fetch, manual=True))
+            self.assertEqual("published", generator.run_once(root, backend, now=now,
+                                                             news_fetcher=fetch, manual=True))
+            with archive.Archive(root).connect() as db:
+                slots = {row[0] for row in db.execute("SELECT slot FROM jobs")}
+            self.assertEqual({int(now.timestamp()) // 3600, -1, -2}, slots)
+            self.assertEqual(3, backend.calls)
+            with archive.Archive(root).lock():
+                with self.assertRaises(BlockingIOError):
+                    generator.run_once(root, backend, now=now,
+                                       news_fetcher=fetch, manual=True)
+
+    def test_manual_does_not_consume_unused_hourly_slot(self):
         class Backend:
             def __init__(self): self.calls = 0
             def probe(self): return {"schema_version": 1, "output_png": True}
@@ -475,18 +508,17 @@ class ArchiveTests(unittest.TestCase):
                 return {**self.NEWS, "source_url": "https://example.com/" + str(len(calls))}
             self.assertEqual("published", generator.run_once(root, backend, now=now,
                                                              news_fetcher=fetch, manual=True))
-            self.assertEqual("already attempted", generator.run_once(root, backend, now=now,
-                                                                       news_fetcher=fetch))
+            hourly_slot = int(now.timestamp()) // 3600
+            store = archive.Archive(root)
+            self.assertFalse(store.job_exists(hourly_slot))
+            with store.connect() as db:
+                self.assertEqual([-1], [row[0] for row in db.execute("SELECT slot FROM jobs")])
             self.assertEqual("published", generator.run_once(root, backend, now=now,
-                                                             news_fetcher=fetch, manual=True))
-            with archive.Archive(root).connect() as db:
-                slots = {row[0] for row in db.execute("SELECT slot FROM jobs")}
-            self.assertEqual({int(now.timestamp()) // 3600, -1}, slots)
+                                                             news_fetcher=fetch))
+            with store.connect() as db:
+                self.assertEqual({-1, hourly_slot},
+                                 {row[0] for row in db.execute("SELECT slot FROM jobs")})
             self.assertEqual(2, backend.calls)
-            with archive.Archive(root).lock():
-                with self.assertRaises(BlockingIOError):
-                    generator.run_once(root, backend, now=now,
-                                       news_fetcher=fetch, manual=True)
 
     def test_topic_catalog_and_atomic_config_save(self):
         import tomllib

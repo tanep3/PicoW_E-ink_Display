@@ -211,7 +211,7 @@ def run_once(root: Path, backend, *, now=None, news_fetcher=None,
     slot = int(now.timestamp()) // 3600
     archive = Archive(root)
     with archive.lock(blocking=not manual):
-        if manual and archive.job_exists(slot):
+        if manual:
             slot = archive.next_manual_slot()
         if not archive.begin(slot):
             return "already attempted"
