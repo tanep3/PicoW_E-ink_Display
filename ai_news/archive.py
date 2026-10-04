@@ -64,6 +64,10 @@ class Archive:
                 CREATE TABLE IF NOT EXISTS stage_attempts (
                   slot INTEGER NOT NULL, stage TEXT NOT NULL, attempts INTEGER NOT NULL,
                   last_error TEXT NOT NULL DEFAULT '', PRIMARY KEY(slot, stage));
+                CREATE TABLE IF NOT EXISTS job_selections (
+                  slot INTEGER PRIMARY KEY, topic_id TEXT NOT NULL, topic_label TEXT NOT NULL,
+                  topic_prompt TEXT NOT NULL, style_id TEXT NOT NULL,
+                  style_label TEXT NOT NULL, style_prompt TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS telemetry (
                   device_id TEXT NOT NULL, request_id TEXT NOT NULL, received_at TEXT NOT NULL,
                   payload TEXT NOT NULL, PRIMARY KEY(device_id, request_id));
@@ -140,16 +144,36 @@ class Archive:
             row = conn.execute("SELECT MIN(slot) FROM jobs WHERE slot < 0").fetchone()
         return (row[0] or 0) - 1
 
-    def begin(self, slot: int) -> bool:
+    def begin(self, slot: int, selection: dict | None = None) -> bool:
         with self.connect() as conn:
+            row = conn.execute("SELECT state FROM jobs WHERE slot=?", (slot,)).fetchone()
+            if row is not None and row[0] not in (
+                    "COLLECTING", "SELECTED", "GENERATING", "VALIDATED"):
+                return False
+            if selection is not None:
+                fields = ("topic_id", "topic_label", "topic_prompt", "style_id",
+                          "style_label", "style_prompt")
+                if set(selection) != set(fields) or any(
+                        not isinstance(selection[field], str) or not selection[field]
+                        for field in fields):
+                    raise ValueError("invalid job selection snapshot")
+                conn.execute("""INSERT OR IGNORE INTO job_selections
+                    (slot,topic_id,topic_label,topic_prompt,style_id,style_label,style_prompt)
+                    VALUES(?,?,?,?,?,?,?)""", (slot,) + tuple(selection[field] for field in fields))
             cursor = conn.execute("INSERT OR IGNORE INTO jobs(slot,state,updated_at) VALUES(?,?,?)",
                                   (slot, "COLLECTING", utcnow()))
             if cursor.rowcount == 1:
                 return True
-            row = conn.execute("SELECT state FROM jobs WHERE slot=?", (slot,)).fetchone()
             # A process interrupted mid-job can resume; completed jobs stay final.
-            return row is not None and row[0] in (
-                "COLLECTING", "SELECTED", "GENERATING", "VALIDATED")
+            return row is not None
+
+    def job_selection(self, slot: int) -> dict | None:
+        fields = ("topic_id", "topic_label", "topic_prompt", "style_id",
+                  "style_label", "style_prompt")
+        with self.connect() as conn:
+            row = conn.execute("SELECT " + ",".join(fields) +
+                               " FROM job_selections WHERE slot=?", (slot,)).fetchone()
+        return dict(zip(fields, row)) if row else None
 
     def save_news(self, slot: int, news: dict) -> None:
         path = self.root / "news" / (str(slot) + ".json")

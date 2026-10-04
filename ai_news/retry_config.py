@@ -11,6 +11,10 @@ import tomllib
 DEFAULT_TOPIC_PROMPT = (
     "24時間以内に発表された、注目に値する面白いAIニュースを1件選び、何が起きたかを要約してください。"
 )
+DEFAULT_STYLE_PROMPT = (
+    "新聞の一コマ風刺画。太く抑揚のある黒い輪郭、白地に少数の象徴物、"
+    "大きな主役と短い視覚的オチを置く。細かな網点を避け、背景は簡略化する。"
+)
 
 
 @dataclass(frozen=True)
@@ -33,18 +37,41 @@ TOPIC_ID = re.compile(r"[a-z][a-z0-9_]{0,39}\Z")
 
 
 @dataclass(frozen=True)
+class Style:
+    id: str
+    label: str
+    prompt: str
+
+
+DEFAULT_STYLE = Style("newspaper_cartoon", "新聞風刺画", DEFAULT_STYLE_PROMPT)
+
+
+@dataclass(frozen=True)
 class RetryConfig:
     news: RetryPolicy = RetryPolicy(2, 0, 0, 180)
     image: RetryPolicy = RetryPolicy(2, 0, 0, 300)
     selected_topic_id: str = "ai_news"
     topics: tuple[Topic, ...] = (DEFAULT_TOPIC,)
+    selected_style_id: str = DEFAULT_STYLE.id
+    styles: tuple[Style, ...] = (DEFAULT_STYLE,)
+
+    @property
+    def topic(self) -> Topic:
+        for topic in self.topics:
+            if topic.id == self.selected_topic_id:
+                return topic
+        raise ValueError("selected topic ID is missing from news.topics")
 
     @property
     def topic_prompt(self) -> str:
-        for topic in self.topics:
-            if topic.id == self.selected_topic_id:
-                return topic.prompt
-        raise ValueError("selected topic ID is missing from news.topics")
+        return self.topic.prompt
+
+    @property
+    def style(self) -> Style:
+        for style in self.styles:
+            if style.id == self.selected_style_id:
+                return style
+        raise ValueError("selected style ID is missing from styles.items")
 
 
 def load_retry_config(path: Path | None = None) -> RetryConfig:
@@ -54,8 +81,8 @@ def load_retry_config(path: Path | None = None) -> RetryConfig:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return RetryConfig()
-    if not isinstance(data, dict) or set(data) - {"news", "image", "push"}:
-        raise ValueError("config supports only [news], [image] and [push]")
+    if not isinstance(data, dict) or set(data) - {"news", "image", "push", "styles"}:
+        raise ValueError("config supports only [news], [image], [push] and [styles]")
 
     def section(name: str, default: RetryPolicy) -> RetryPolicy:
         values = data.get(name, {})
@@ -102,7 +129,34 @@ def load_retry_config(path: Path | None = None) -> RetryConfig:
             ids.add(ident)
             topics.append(Topic(ident, label.strip(), prompt.strip()))
         topics = tuple(topics)
-    return RetryConfig(news, image, selected, topics)
+    style_values = data.get("styles", {})
+    if not isinstance(style_values, dict) or set(style_values) - {"selected_style_id", "items"}:
+        raise ValueError("invalid config section [styles]")
+    selected_style = style_values.get("selected_style_id", defaults.selected_style_id)
+    if not isinstance(selected_style, str) or not TOPIC_ID.fullmatch(selected_style):
+        raise ValueError("styles.selected_style_id must be a stable ID")
+    raw_styles = style_values.get("items")
+    if raw_styles is None:
+        styles = defaults.styles
+    else:
+        if not isinstance(raw_styles, list) or not raw_styles:
+            raise ValueError("styles.items must be a nonempty TOML style list")
+        styles = []
+        ids = set()
+        for item in raw_styles:
+            if not isinstance(item, dict) or set(item) != {"id", "label", "prompt"}:
+                raise ValueError("each style needs id, label and prompt")
+            ident, label, prompt = item["id"], item["label"], item["prompt"]
+            if not isinstance(ident, str) or not TOPIC_ID.fullmatch(ident) or ident in ids:
+                raise ValueError("style IDs must be unique, stable lowercase names")
+            if (not isinstance(label, str) or not label.strip() or len(label) > 80
+                    or not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 1200
+                    or any(ord(char) < 32 and char not in "\t\n" for char in prompt)):
+                raise ValueError("style label or prompt is empty or too long")
+            ids.add(ident)
+            styles.append(Style(ident, label.strip(), prompt.strip()))
+        styles = tuple(styles)
+    return RetryConfig(news, image, selected, topics, selected_style, styles)
 
 
 def run_with_retry(operation, policy: RetryPolicy, retryable: tuple[type[Exception], ...],

@@ -1,33 +1,44 @@
 <!doctype html>
 <html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>題材の設定 · AIニュース風刺画端末</title>
+<title>題材と作画テイストの設定 · AIニュース風刺画端末</title>
 <style>
 :root{font-family:system-ui,sans-serif;color:#222;background:#f7f6f2}*{box-sizing:border-box}
 body{max-width:820px;margin:auto;padding:1rem}a{color:#15577a}a:focus-visible,button:focus-visible,input:focus-visible,summary:focus-visible{outline:3px solid #1761ad}
 fieldset{border:0;padding:0;display:grid;gap:.6rem}legend{font-weight:bold;margin:1rem 0}
 .choice{display:block;background:white;border:1px solid #ccc;border-radius:.5rem;padding:.8rem}.choice:has(input:checked){border:2px solid #17654b;background:#f4fbf7}
 label{display:flex;align-items:center;gap:.6rem;font-weight:600;cursor:pointer}input{width:1.2rem;height:1.2rem}details{margin:.4rem 0 0 1.8rem}summary{cursor:pointer;color:#495347}details p{line-height:1.55}
-button{background:#162f27;color:white;border:0;border-radius:.3rem;padding:.65rem 1rem;cursor:pointer}button:disabled{opacity:.5;cursor:default}#status{min-height:1.5em}
+button{background:#162f27;color:white;border:0;border-radius:.3rem;padding:.65rem 1rem;cursor:pointer}button:disabled{opacity:.5;cursor:default}.status{min-height:1.5em}
 </style></head><body>
-<p><a href="/">← 絵とカレンダーへ戻る</a></p><h1>題材の設定</h1>
-<p>題材を1つ選び、保存してください。候補の名前と説明は母艦のconfigから読み込みます。次の手動生成と毎時生成から反映され、生成中の絵は変わりません。</p>
-<form id="topic-form"><fieldset id="choices"><legend>描く題材</legend></fieldset><p id="status" role="status" aria-live="polite">読込中…</p><button id="save" type="submit" disabled>選択を保存</button></form>
+<p><a href="/">← 絵とカレンダーへ戻る</a></p><h1>題材と作画テイストの設定</h1>
+<p>題材とテイストをそれぞれ選び、保存してください。表示名と説明は母艦のconfigから読み込みます。保存した選択は次の手動生成と毎時生成から反映され、生成中の絵は変わりません。</p>
+<form id="topic-form"><fieldset id="topic-choices"><legend>描く題材</legend></fieldset><p id="topic-status" class="status" role="status" aria-live="polite">読込中…</p><button id="topic-save" type="submit" disabled>題材を保存</button></form>
+<form id="style-form"><fieldset id="style-choices"><legend>作画テイスト</legend></fieldset><p id="style-status" class="status" role="status" aria-live="polite">読込中…</p><button id="style-save" type="submit" disabled>テイストを保存</button></form>
 <script>
 "use strict";
 const $=s=>document.querySelector(s);
-let topics=[],saved=null,saving=false,needsSelection=false;
-async function load(){try{const r=await fetch("/v1/topics",{credentials:"same-origin",cache:"no-store"});if(!r.ok)throw Error();const data=await r.json();topics=data.topics;saved=data.selected_topic_id;needsSelection=!data.selection_valid;
- const field=$("#choices");field.querySelectorAll(".choice").forEach(x=>x.remove());for(const topic of topics){const card=document.createElement("div");card.className="choice";
- const label=document.createElement("label"),input=document.createElement("input");input.type="radio";input.name="topic";input.value=topic.id;input.checked=topic.id===saved;label.append(input,document.createTextNode(topic.label));card.append(label);
- const detail=document.createElement("details"),summary=document.createElement("summary"),description=document.createElement("p");summary.textContent="説明を見る";description.textContent=topic.prompt;detail.append(summary,description);card.append(detail);field.append(card)}
- showSelection()}catch(e){$("#status").textContent="設定を取得できませんでした。再読込してください。";$("#save").disabled=true}}
-function showSelection(){const selected=$("input[name=topic]:checked")?.value,title=topics.find(t=>t.id===saved)?.label;
- $("#save").disabled=saving||!selected||selected===saved;
- $("#status").textContent=selected===saved?"保存済み: "+title:(selected?"未保存の変更があります。保存済み: "+(title||"再選択が必要"):(needsSelection?"選択中の題材がconfigから削除されました。選び直して保存してください。":"題材を選んでください。"))}
-$("#choices").addEventListener("change",showSelection);
-$("#topic-form").addEventListener("submit",async event=>{event.preventDefault();const selected=$("input[name=topic]:checked")?.value;if(!selected||saving||selected===saved)return;
- saving=true;$("#save").disabled=true;$("#status").textContent="保存中…";
- try{const r=await fetch("/v1/topics",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json","X-AI-News-Action":"save-topic"},body:JSON.stringify({topic_id:selected})});if(!r.ok)throw Error();
- await load();if(saved!==selected)throw Error()}catch(e){$("#status").textContent="保存を確認できませんでした。現在の設定を再読込してください。";$("#save").disabled=false}finally{saving=false;if(saved===selected)showSelection()}});
-load();
+const groups={
+ topic:{url:"/v1/topics",action:"save-topic",field:"topic_id",selected:"selected_topic_id",items:"topics",missing:"選択中の題材がconfigから削除されました。選び直して保存してください。",empty:"題材を選んでください。",name:"題材"},
+ style:{url:"/v1/styles",action:"save-style",field:"style_id",selected:"selected_style_id",items:"styles",missing:"選択中のテイストがconfigから削除されました。選び直して保存してください。",empty:"テイストを選んでください。",name:"テイスト"}
+};
+for(const group of Object.values(groups)){group.options=[];group.saved=null;group.valid=false;group.saving=false}
+function selected(kind){return document.querySelector(`input[name=${kind}]:checked`)?.value}
+function showSelection(kind){const g=groups[kind],choice=selected(kind),title=g.options.find(item=>item.id===g.saved)?.label;
+ $(`#${kind}-save`).disabled=g.saving||!choice||choice===g.saved;
+ $(`#${kind}-status`).textContent=choice===g.saved&&g.valid?"保存済み: "+title:
+  choice?"未保存の変更があります。保存済み: "+(title||"再選択が必要"):
+  !g.valid?g.missing:g.empty}
+async function loadGroup(kind){const g=groups[kind];try{const r=await fetch(g.url,{credentials:"same-origin",cache:"no-store"});if(!r.ok)throw Error();const data=await r.json();
+ g.options=data[g.items];g.saved=data[g.selected];g.valid=data.selection_valid;
+ const field=$(`#${kind}-choices`);field.querySelectorAll(".choice").forEach(x=>x.remove());
+ for(const item of g.options){const card=document.createElement("div");card.className="choice";
+  const label=document.createElement("label"),input=document.createElement("input");input.type="radio";input.name=kind;input.value=item.id;input.checked=item.id===g.saved;label.append(input,document.createTextNode(item.label));card.append(label);
+  const detail=document.createElement("details"),summary=document.createElement("summary"),description=document.createElement("p");summary.textContent="説明を見る";description.textContent=item.prompt;detail.append(summary,description);card.append(detail);field.append(card)}
+ showSelection(kind)}catch(e){$(`#${kind}-status`).textContent="設定を取得できませんでした。再読込してください。";$(`#${kind}-save`).disabled=true}}
+async function saveGroup(kind,event){event.preventDefault();const g=groups[kind],choice=selected(kind);if(!choice||g.saving||choice===g.saved)return;
+ g.saving=true;$(`#${kind}-save`).disabled=true;$(`#${kind}-status`).textContent="保存中…";
+ try{const r=await fetch(g.url,{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json","X-AI-News-Action":g.action},body:JSON.stringify({[g.field]:choice})});if(!r.ok)throw Error();
+  await loadGroup(kind);if(g.saved!==choice)throw Error()}
+ catch(e){$(`#${kind}-status`).textContent="保存を確認できませんでした。現在の設定を再読込してください。";$(`#${kind}-save`).disabled=false}
+ finally{g.saving=false;if(g.saved===choice)showSelection(kind)}}
+for(const kind of Object.keys(groups)){$(`#${kind}-choices`).addEventListener("change",()=>showSelection(kind));$(`#${kind}-form`).addEventListener("submit",event=>saveGroup(kind,event));loadGroup(kind)}
 </script></body></html>

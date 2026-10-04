@@ -18,7 +18,7 @@ button:disabled{opacity:.55;cursor:wait}.actions{display:flex;align-items:center
 @media(max-width:650px){.calendar{gap:.1rem}.day{min-height:86px;overflow:hidden}.day img{display:block;width:100%;max-height:28px}.day small{font-size:.65rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
 </style></head><body>
 <h1>AIニュース風刺画アーカイブ</h1><p>日本時間の日付から、保存された絵を探せます。</p>
-<div class="actions"><button id="generate" class="primary" type="button">新しい絵を生成</button><a href="/settings/">設定・題材を選ぶ</a><span id="generation-status" role="status" aria-live="polite"></span></div>
+<div class="actions"><button id="generate" class="primary" type="button">新しい絵を生成</button><a href="/settings/">題材とテイストを選ぶ</a><span id="generation-status" role="status" aria-live="polite"></span></div>
 <p>生成には数分かかる場合があります。公開後にPicoへ送信し、表示結果を別に確認します。</p><p id="push-status" role="status" aria-live="polite"></p>
 <section class="latest" aria-label="最新の絵"><h2>最新の絵</h2><p id="latest-message">読込中…</p><img id="latest-image" alt="最新の絵" class="hidden"></section>
 <nav class="toolbar" aria-label="月の移動"><button id="prev" type="button">前の月</button><strong id="month"></strong><button id="next" type="button">次の月</button></nav>
@@ -58,8 +58,8 @@ async function pushStatus(){try{const job=await get("/v1/push/status");$("#push-
  catch(e){$("#push-status").textContent="Picoへの送信状態を取得できませんでした。"}}
 async function showLatest(){try{const data=await get("/v1/latest"),img=$("#latest-image");img.src="/v1/frames/"+data.frame_id+".png";img.classList.remove("hidden");$("#latest-message").textContent="公開番号 "+data.publish_seq}catch(e){$("#latest-message").textContent="公開済みの絵はまだありません。"}}
 async function refreshAfterGeneration(){const day=selectedDay;await showLatest();await showMonth();if(day)await showDay(day,false);await pushStatus()}
-async function generationStatus(){try{const data=await get("/v1/generate/status"),state=data.state;$("#generate").disabled=["running","busy","invalid_topic","invalid_config"].includes(state);
- const labels={idle:"",running:"生成中です。画面を閉じても処理は続きます。",busy:"別の生成が進行中です。",succeeded:"新しい絵を公開しました。",unchanged:"生成しましたが、最新画像は変わりませんでした。",failed:"生成に失敗しました。前の絵を保持しています。",invalid_topic:"選択中の題材が削除されています。設定画面で選び直してください。",invalid_config:"configを読み込めません。母艦の設定を確認してください。"};
+async function generationStatus(){try{const data=await get("/v1/generate/status"),state=data.state;$("#generate").disabled=["running","busy","invalid_topic","invalid_style","invalid_config"].includes(state);
+ const labels={idle:"",running:"生成中です。画面を閉じても処理は続きます。",busy:"別の生成が進行中です。",succeeded:"新しい絵を公開しました。",unchanged:"生成しましたが、最新画像は変わりませんでした。",failed:"生成に失敗しました。前の絵を保持しています。",invalid_topic:"選択中の題材が削除されています。設定画面で選び直してください。",invalid_style:"選択中のテイストが削除されています。設定画面で選び直してください。",invalid_config:"configを読み込めません。母艦の設定を確認してください。"};
  $("#generation-status").textContent=labels[state]??"状態を確認できません。";
  if((state==="succeeded"||state==="unchanged")&&data.run_id&&data.run_id!==seenRun){seenRun=data.run_id;await refreshAfterGeneration()}
  }catch(e){$("#generation-status").textContent="生成状態を取得できませんでした。";$("#generate").disabled=false}}

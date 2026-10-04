@@ -46,6 +46,10 @@ class ManualManager:
             config.topic_prompt
         except ValueError:
             return {"state": "invalid_topic"}
+        try:
+            config.style
+        except ValueError:
+            return {"state": "invalid_style"}
         return {key: value[key] for key in ("state", "run_id", "frame_id") if key in value}
 
     def start(self) -> tuple[dict, bool]:
@@ -53,7 +57,7 @@ class ManualManager:
             current = self.status()
             if current["state"] == "running":
                 return current, False
-            if current["state"] in ("invalid_config", "invalid_topic"):
+            if current["state"] in ("invalid_config", "invalid_topic", "invalid_style"):
                 return current, False
             try:
                 with self.archive.lock(blocking=False):

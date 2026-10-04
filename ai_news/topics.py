@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 import re
 import tomllib
@@ -23,34 +24,58 @@ def topic_snapshot(path: Path = CONFIG_PATH) -> dict:
     }
 
 
-def save_selected_topic(topic_id: str, path: Path = CONFIG_PATH) -> str:
-    """Atomically change only selected_topic_id; keep topic text and retries intact."""
+def style_snapshot(path: Path = CONFIG_PATH) -> dict:
+    config = load_retry_config(path)
+    available = {style.id for style in config.styles}
+    return {
+        "selected_style_id": config.selected_style_id if config.selected_style_id in available else None,
+        "selection_valid": config.selected_style_id in available,
+        "styles": [{"id": style.id, "label": style.label, "prompt": style.prompt}
+                   for style in config.styles],
+    }
+
+
+def _save_selection(ident: str, section: str, field: str, available: set[str],
+                    path: Path) -> str:
     source = path if path.exists() else path.parent / "config.sample"
     before = tomllib.loads(source.read_text(encoding="utf-8"))
-    config = load_retry_config(source)
-    if topic_id not in {topic.id for topic in config.topics}:
-        raise ValueError("topic ID is not configured")
+    if ident not in available:
+        raise ValueError(section + " ID is not configured")
     lines = source.read_text(encoding="utf-8").splitlines()
-    start = next((i for i, line in enumerate(lines) if line.strip() == "[news]"), None)
+    start = next((i for i, line in enumerate(lines) if line.strip() == "[" + section + "]"), None)
     if start is None:
-        lines.extend(["", "[news]"])
+        lines.extend(["", "[" + section + "]"])
         start = len(lines) - 1
     end = next((i for i in range(start + 1, len(lines))
                 if re.fullmatch(r"\s*\[+[^]]+\]+\s*", lines[i])), len(lines))
     indices = [i for i in range(start + 1, end)
-               if re.match(r"\s*selected_topic_id\s*=", lines[i])]
-    replacement = 'selected_topic_id = "' + topic_id + '"'
+               if re.match(r"\s*" + field + r"\s*=", lines[i])]
+    replacement = field + ' = "' + ident + '"'
     if indices:
         lines[indices[0]] = replacement
     else:
         lines.insert(start + 1, replacement)
     updated = "\n".join(lines) + "\n"
     after = tomllib.loads(updated)
-    old_news = {k: v for k, v in before.get("news", {}).items() if k != "selected_topic_id"}
-    new_news = {k: v for k, v in after["news"].items() if k != "selected_topic_id"}
-    if (old_news != new_news or before.get("image", {}) != after.get("image", {})
-            or before.get("push", {}) != after.get("push", {})
-            or after["news"]["selected_topic_id"] != topic_id):
+    expected = deepcopy(before)
+    expected.setdefault(section, {})[field] = ident
+    if after != expected:
         raise ValueError("config changed unexpectedly")
     atomic_write(path, updated.encode("utf-8"))
-    return topic_id
+    return ident
+
+
+def save_selected_topic(topic_id: str, path: Path = CONFIG_PATH) -> str:
+    """Atomically change only the selected topic while preserving style settings."""
+    source = path if path.exists() else path.parent / "config.sample"
+    config = load_retry_config(source)
+    return _save_selection(topic_id, "news", "selected_topic_id",
+                           {topic.id for topic in config.topics}, path)
+
+
+def save_selected_style(style_id: str, path: Path = CONFIG_PATH) -> str:
+    """Atomically change only the selected style while preserving topic settings."""
+    source = path if path.exists() else path.parent / "config.sample"
+    config = load_retry_config(source)
+    return _save_selection(style_id, "styles", "selected_style_id",
+                           {style.id for style in config.styles}, path)

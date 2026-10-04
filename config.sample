@@ -79,3 +79,88 @@ retry_count = 2
 interval_seconds = 30
 attempt_timeout_seconds = 60
 deadline_seconds = 0
+
+# Artwork style is independent of the news topic. Keep IDs stable when reordering.
+# Add, remove, or edit id/label/prompt entries here. The selected ID must exist.
+[styles]
+selected_style_id = "newspaper_cartoon"
+
+[[styles.items]]
+id = "newspaper_cartoon"
+label = "新聞風刺画"
+prompt = "新聞の一コマ風刺画。太く抑揚のある黒い輪郭、白地に少数の象徴物、大きな主役と短い視覚的オチを置く。細かな網点を避け、背景は簡略化する。"
+
+[[styles.items]]
+id = "toriyama_adventure"
+label = "鳥山明風の冒険漫画"
+prompt = "鳥山明風の冒険漫画を想起させる、丸みと勢いのあるオリジナル人物・機械を描く。太さに変化のある輪郭、跳ねるポーズ、斜めのアクション構図と少数の速度線を使う。既存作品のキャラクター、衣装、場面は複製しない。"
+
+[[styles.items]]
+id = "showa_shojo"
+label = "昭和のキラキラ少女漫画"
+prompt = "昭和のキラキラ少女漫画調。柔らかな曲線の人物を中心に置き、瞳の輝き、星や花の大きな白抜き模様で感情や驚きを表す。白黒の面を整理し、細密な網点や長文の台詞は使わない。"
+
+[[styles.items]]
+id = "showa_gag"
+label = "昭和のギャグ漫画"
+prompt = "昭和のギャグ漫画調。誇張した表情と大きな身振り、道具との意外な位置関係で一目で伝わるオチを作る。太い輪郭、短い動線、白地の余白を使い、小さな描き込みを避ける。"
+
+[[styles.items]]
+id = "ukiyoe_woodblock"
+label = "木版画・浮世絵調"
+prompt = "木版画・浮世絵調。波、雲、衣服や建物を流れる輪郭と平坦な黒面で描き、斜めの構図と大胆な余白を使う。版木のかすれは大きな模様で示し、細かな木目や中間調は使わない。"
+
+[[styles.items]]
+id = "shadow_play"
+label = "影絵"
+prompt = "影絵。人物・物体を連続した黒いシルエットにし、輪郭と白い抜き形だけで動作と関係を伝える。前景と背景の重なりを明確にし、内部の細線やグレーの陰影は使わない。"
+
+[[styles.items]]
+id = "pixel_art"
+label = "レトロゲームのドット絵"
+prompt = "レトロゲームのドット絵。大きく見える四角い画素で主役と少数の背景物を組み、横長画面の読みやすいゲーム場面にする。黒白2値の塊と段階的な輪郭を使い、細かなディザや小文字は避ける。"
+
+[[styles.items]]
+id = "manual_pictogram"
+label = "取扱説明書のピクトグラム"
+prompt = "取扱説明書のピクトグラム調。均一で太い輪郭の単純な人物・物体を配置し、矢印や番号を使うなら最大2段階で動作を示す。余計な装飾と陰影を除き、文字なしでも意味が伝わる構図にする。"
+
+[[styles.items]]
+id = "vintage_science"
+label = "昔の科学雑誌の挿絵"
+prompt = "昔の科学雑誌の挿絵調。装置や現象を主役に、断面図・拡大図・矢印を一つの図面風構図へまとめる。正確そうに見える架空の数値や部品名は書かず、黒い輪郭と疎らなハッチングで立体を示す。"
+
+[[styles.items]]
+id = "monochrome_travel_poster"
+label = "白黒の旅行ポスター"
+prompt = "白黒の旅行ポスター調。土地を象徴する景観を大きな黒白の面で切り取り、低い視点や遠近感で旅への期待を表す。空と地面に広い余白を残し、文字を入れるなら短い地名だけにする。"
+
+[[styles.items]]
+id = "gentle_single_panel"
+label = "ゆるい一コマ漫画"
+prompt = "ゆるい一コマ漫画。丸みのある簡単な輪郭、小さな身振りと身近な小道具で、穏やかな意外性を表す。主役を中央に大きく置き、背景は数本の線に絞り、嘲笑や騒がしい効果線を避ける。"
+
+[[styles.items]]
+id = "ligne_claire"
+label = "リーニュクレール"
+prompt = "リーニュクレール調。均一な太さの明瞭な輪郭で人物と物を描き、建物や道具などの背景も整理された線で具体的に示す。黒い面は要所だけにし、ハッチングとぼかしを使わず、前景と背景を読み分けられる構図にする。"
+
+[[styles.items]]
+id = "papercut_stencil"
+label = "切り絵・ステンシル"
+prompt = "切り絵・ステンシル調。紙から切り抜いたような大きい黒形と白い抜き形を重ね、細い部分にはつなぎを残す。内側の描線より形の境界と白黒の配置で主題を表し、細片や灰色の影を避ける。"
+
+[[styles.items]]
+id = "minimal_outline"
+label = "ミニマルな輪郭線画"
+prompt = "ミニマルな輪郭線画。少数の連続した線で主役の形と一つの動作だけを示し、広い白い余白に小さな黒いアクセントを置く。説明的な背景、細部の陰影、過剰な象徴物を省く。"
+
+[[styles.items]]
+id = "showa_advertising"
+label = "昭和の看板・広告画"
+prompt = "昭和の看板・広告画調。題材を象徴する架空の製品や道具を大きく掲げ、幾何学的な黒白の帯と力強い斜め配置で目を引く。実在の商標を模倣せず、文字は短い一般語だけ、網点は使わない。"
+
+[[styles.items]]
+id = "showa_film_poster"
+label = "昭和の映画ポスター風"
+prompt = "昭和の映画ポスター風。主役の大きな顔または姿と、出来事を示す象徴物を斜めのモンタージュに重ねる。重い黒影と白い光の対比を使い、題名用の余白を残す。実在の映画や俳優の図像は複製しない。"

@@ -139,7 +139,7 @@ class ArchiveTests(unittest.TestCase):
         class Backend:
             def __init__(self): self.calls = []
             def probe(self): return {"schema_version": 1, "output_png": True}
-            def generate(self, news, work, *, feedback, timeout):
+            def generate(self, news, work, *, feedback, timeout, style_prompt):
                 self.calls.append((news, feedback, work, timeout))
                 return b"\x89PNG\r\n\x1a\nbroken" if len(self.calls) < 3 else source_png()
 
