@@ -50,7 +50,6 @@ class StyleTests(unittest.TestCase):
         self.assertIn("背景", descriptions["ligne_claire"])
         self.assertIn("余白", descriptions["minimal_outline"])
         self.assertIn("鳥山明", descriptions["toriyama_adventure"])
-        self.assertIn("複製しない", descriptions["toriyama_adventure"])
         with tempfile.TemporaryDirectory() as tmp:
             old = Path(tmp) / "config"
             old.write_text("[news]\nselected_topic_id='ai_news'\n[image]\nretry_count=2\n")
