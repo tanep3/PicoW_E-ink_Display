@@ -192,7 +192,7 @@ class StyleTests(unittest.TestCase):
             path.write_text(path.read_text().replace(
                 'selected_topic_id = "ai_news"', 'selected_topic_id = "travel"'))
             chosen = []
-            def fake_editor(work, now, timeout, feedback, *, topic_prompt, excluded_urls):
+            def fake_editor(work, now, timeout, feedback, *, topic_prompt, excluded_urls, evidence):
                 chosen.append(topic_prompt)
                 return NEWS
             with patch.object(generator, "codex_editor", side_effect=fake_editor):

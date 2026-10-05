@@ -37,6 +37,7 @@ LAN内のブラウザで`http://<母艦のLANアドレス>:16150/`を開きま�
 
 - [PUSH改訂設計・運用確認](docs/PUSH_DESIGN_2026-10-04.md)
 - [作画テイスト選択の内部設計](docs/STYLE_SELECTION_2026-10-04.md)
+- [Codexへ渡したプロンプトの証拠](docs/PROMPT_EVIDENCE_2026-10-05.md)
 - [運用・障害復旧](docs/OPERATIONS.md)
 - [現行の実装仕様](docs/IMPLEMENTED_SPEC.md)と[生成フローの設計改訂](docs/DESIGN_REVISION_2026-10-04.md)
 - [ブラウザギャラリー](docs/GALLERY.md)と[検証記録](docs/VALIDATION.md)

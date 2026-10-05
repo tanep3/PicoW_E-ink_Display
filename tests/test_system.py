@@ -434,7 +434,7 @@ class ArchiveTests(unittest.TestCase):
                     image.putpixel((self.calls, 10), 0)
                     buf = BytesIO(); image.save(buf, "PNG")
                     return buf.getvalue()
-            def editor(work, now, timeout, feedback, *, topic_prompt, excluded_urls):
+            def editor(work, now, timeout, feedback, *, topic_prompt, excluded_urls, evidence):
                 chosen.append((topic_prompt, excluded_urls))
                 return {**self.NEWS, "source_url": "https://example.com/" + str(len(chosen))}
             backend = Backend()

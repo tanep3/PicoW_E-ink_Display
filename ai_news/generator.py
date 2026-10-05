@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from datetime import datetime, timezone
 import ipaddress
 import json
@@ -17,6 +18,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from .archive import Archive
 from .frame import normalize
+from .prompt_evidence import PromptEvidence, PromptTarget
 from .retry_config import (DEFAULT_STYLE_PROMPT, DEFAULT_TOPIC_PROMPT,
                            RetryConfig, load_retry_config, run_with_retry)
 
@@ -83,7 +85,8 @@ def build_news_prompt(topic_prompt: str, excluded_urls: set[str], now: datetime,
 
 def codex_editor(work: Path, now: datetime, timeout: float = 180,
                  feedback: str = "", *, topic_prompt: str = DEFAULT_TOPIC_PROMPT,
-                 excluded_urls: set[str] | None = None) -> dict:
+                 excluded_urls: set[str] | None = None,
+                 evidence: PromptTarget | None = None) -> dict:
     cli = shutil.which("codex")
     if not cli:
         raise RuntimeError("Codex CLI unavailable")
@@ -94,13 +97,23 @@ def codex_editor(work: Path, now: datetime, timeout: float = 180,
     command = [cli, "exec", "--ephemeral", "--skip-git-repo-check",
                "--model", "gpt-6-luna", "--sandbox", "read-only",
                "--output-schema", str(schema_path), "--output-last-message", str(result_path), prompt]
-    result = subprocess.run(command, cwd=work, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                            stderr=subprocess.PIPE, timeout=timeout)
-    if not result_path.is_file():
-        raise RuntimeError("news result file missing (exit " + str(result.returncode) + ")")
-    if not 0 < result_path.stat().st_size <= 10000:
-        raise ValueError("news result empty or too large")
-    return json.loads(result_path.read_text(encoding="utf-8"))
+    if evidence is not None and evidence.stage != "news":
+        raise ValueError("news evidence stage mismatch")
+    with (PromptEvidence(evidence, command) if evidence else nullcontext()) as proof:
+        result = subprocess.run(command, cwd=work, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                                timeout=timeout)
+        if proof:
+            proof.exited(result.returncode)
+        if not result_path.is_file():
+            raise RuntimeError("news result file missing (exit " + str(result.returncode) + ")")
+        if not 0 < result_path.stat().st_size <= 10000:
+            raise ValueError("news result empty or too large")
+        data = result_path.read_bytes()
+        selected = json.loads(data.decode("utf-8"))
+        if proof:
+            proof.accepted("news_json", data)
+        return selected
 
 
 class CommandImageBackend:
@@ -159,7 +172,8 @@ class CodexImageBackend:
                 "backend": "codex-headless-imagegen", "cli_version": version.stdout.strip()}
 
     def generate(self, news: dict, work: Path, *, feedback: str = "",
-                 timeout: float = 300, style_prompt: str = DEFAULT_STYLE_PROMPT) -> bytes:
+                 timeout: float = 300, style_prompt: str = DEFAULT_STYLE_PROMPT,
+                 evidence: PromptTarget | None = None) -> bytes:
         cli = shutil.which("codex")
         if not cli:
             raise RuntimeError("Codex CLI unavailable")
@@ -168,27 +182,35 @@ class CodexImageBackend:
         before = {p.name for p in root.iterdir() if p.is_dir()} if root.is_dir() else set()
         message_path = work / "image-result.txt"
         started = time.time()
-        result = subprocess.run([cli, "exec", "--ephemeral", "--skip-git-repo-check",
-                                 "--model", "gpt-6-luna", "--sandbox", "workspace-write",
-                                 "--cd", str(work), "--output-last-message", str(message_path), prompt],
-                                cwd=work, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                stderr=subprocess.PIPE, timeout=timeout)
-        log = result.stderr.decode("utf-8", errors="replace")
-        message = message_path.read_text(encoding="utf-8")[:10000] if message_path.is_file() else ""
-        paths = re.findall(r"/[A-Za-z0-9_./-]+\.png", message + "\n" + log)
-        new_dirs = ({p.resolve() for p in root.iterdir() if p.is_dir() and p.name not in before}
-                    if root.is_dir() else set())
-        for value in reversed(paths):
-            candidate = Path(value).resolve()
-            local_output = (candidate.is_relative_to(work.resolve())
-                            and not candidate.is_relative_to(root))
-            belongs = candidate.parent in new_dirs or local_output
-            if belongs and candidate.is_file() and candidate.stat().st_mtime >= started - 2:
-                data = candidate.read_bytes()
-                if 0 < len(data) <= 20_000_000 and data[:8] == b"\x89PNG\r\n\x1a\n":
-                    return data
-        raise RuntimeError("no attributable PNG from this image attempt (exit "
-                           + str(result.returncode) + ")")
+        command = [cli, "exec", "--ephemeral", "--skip-git-repo-check",
+                   "--model", "gpt-6-luna", "--sandbox", "workspace-write",
+                   "--cd", str(work), "--output-last-message", str(message_path), prompt]
+        if evidence is not None and evidence.stage != "image":
+            raise ValueError("image evidence stage mismatch")
+        with (PromptEvidence(evidence, command) if evidence else nullcontext()) as proof:
+            result = subprocess.run(command, cwd=work, stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                                    timeout=timeout)
+            if proof:
+                proof.exited(result.returncode)
+            log = result.stderr.decode("utf-8", errors="replace")
+            message = message_path.read_text(encoding="utf-8")[:10000] if message_path.is_file() else ""
+            paths = re.findall(r"/[A-Za-z0-9_./-]+\.png", message + "\n" + log)
+            new_dirs = ({p.resolve() for p in root.iterdir() if p.is_dir() and p.name not in before}
+                        if root.is_dir() else set())
+            for value in reversed(paths):
+                candidate = Path(value).resolve()
+                local_output = (candidate.is_relative_to(work.resolve())
+                                and not candidate.is_relative_to(root))
+                belongs = candidate.parent in new_dirs or local_output
+                if belongs and candidate.is_file() and candidate.stat().st_mtime >= started - 2:
+                    data = candidate.read_bytes()
+                    if 0 < len(data) <= 20_000_000 and data[:8] == b"\x89PNG\r\n\x1a\n":
+                        if proof:
+                            proof.accepted("image_png", data)
+                        return data
+            raise RuntimeError("no attributable PNG from this image attempt (exit "
+                               + str(result.returncode) + ")")
 
 
 def build_image_prompt(news: dict, style_prompt: str, feedback: str = "") -> str:
@@ -272,7 +294,8 @@ def run_once(root: Path, backend, *, now=None, news_fetcher=None,
                                       if news_fetcher else
                                       codex_editor(Path(attempt_dir), attempt_time, timeout, feedback,
                                                    topic_prompt=topic_prompt,
-                                                   excluded_urls=excluded_urls()))
+                                                   excluded_urls=excluded_urls(),
+                                                   evidence=PromptTarget(root, slot, "news", attempt + 1)))
                             selected = validate_news(result)
                             require_unused_source(selected)
                             return selected
@@ -289,9 +312,11 @@ def run_once(root: Path, backend, *, now=None, news_fetcher=None,
                     archive.begin_attempt(slot, "image")
                     archive.state(slot, "GENERATING")
                     with tempfile.TemporaryDirectory(dir=work) as attempt_dir:
-                        image = backend.generate(news, Path(attempt_dir),
-                                                 feedback=feedback, timeout=timeout,
-                                                 style_prompt=style_prompt)
+                        options = {"feedback": feedback, "timeout": timeout,
+                                   "style_prompt": style_prompt}
+                        if isinstance(backend, CodexImageBackend):
+                            options["evidence"] = PromptTarget(root, slot, "image", attempt + 1)
+                        image = backend.generate(news, Path(attempt_dir), **options)
                         if not isinstance(image, bytes) or image[:8] != b"\x89PNG\r\n\x1a\n":
                             raise ValueError("image attempt did not return PNG bytes")
                         return normalize(image)
