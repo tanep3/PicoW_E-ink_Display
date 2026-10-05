@@ -130,6 +130,8 @@ class CustomGenerationTests(unittest.TestCase):
         self.assertIn("one selected style", prompt)
         self.assertIn("Do not run news research", prompt)
         self.assertNotIn("Sourced text:", prompt)
+        self.assertNotIn("copying existing characters", prompt)
+        self.assertIn("copying existing artworks, logos or layouts", prompt)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             work = root / "work"

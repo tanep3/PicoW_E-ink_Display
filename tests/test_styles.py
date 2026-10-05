@@ -120,6 +120,8 @@ class StyleTests(unittest.TestCase):
         self.assertIn("250x122", image_prompt)
         self.assertIn("1-bit", image_prompt)
         self.assertIn("original composition", image_prompt)
+        self.assertNotIn("copying existing characters", image_prompt)
+        self.assertIn("copying existing artworks, logos or layouts", image_prompt)
         self.assertNotIn("Usually make a witty editorial cartoon", image_prompt)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -137,6 +139,17 @@ class StyleTests(unittest.TestCase):
                 self.assertEqual(art(), generator.CodexImageBackend(generated).generate(
                     NEWS, root, style_prompt=style.prompt))
             self.assertIn(style.prompt, seen[0])
+
+    def test_existing_character_request_keeps_other_copy_limits(self):
+        character = "既存キャラクターの主人公"
+        for news in ({"source_url": "https://example.com/story", "summary": character},
+                     {"custom_text": character + "を描く"}):
+            with self.subTest(input_kind="custom" if "custom_text" in news else "news"):
+                prompt = generator.build_image_prompt(news, "選択した画風")
+                self.assertIn(character, prompt)
+                self.assertNotIn("copying existing characters", prompt)
+                self.assertIn("copying existing artworks, logos or layouts", prompt)
+                self.assertIn("Do not invent factual claims", prompt)
 
     def test_style_and_topic_snapshot_survive_image_crash_and_config_edit(self):
         class Backend:
@@ -191,7 +204,7 @@ class StyleTests(unittest.TestCase):
             path.write_text(path.read_text().replace(
                 'selected_topic_id = "ai_news"', 'selected_topic_id = "travel"'))
             chosen = []
-            def fake_editor(work, now, timeout, feedback, *, topic_prompt, excluded_urls, evidence):
+            def fake_editor(work, now, timeout, feedback, *, topic_prompt, excluded_urls, evidence, model):
                 chosen.append(topic_prompt)
                 return NEWS
             with patch.object(generator, "codex_editor", side_effect=fake_editor):

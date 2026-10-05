@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>題材と作画テイストの設定 · AIニュース風刺画端末</title>
+<title>生成設定 · AIニュース風刺画端末</title>
 <style>
 :root{font-family:system-ui,sans-serif;color:#222;background:#f7f6f2}*{box-sizing:border-box}
 body{max-width:820px;margin:auto;padding:1rem}a{color:#15577a}a:focus-visible,button:focus-visible,input:focus-visible,summary:focus-visible{outline:3px solid #1761ad}
@@ -8,11 +8,18 @@ fieldset{border:0;padding:0;display:grid;gap:.6rem}legend{font-weight:bold;margi
 .choice{display:block;background:white;border:1px solid #ccc;border-radius:.5rem;padding:.8rem}.choice:has(input:checked){border:2px solid #17654b;background:#f4fbf7}
 label{display:flex;align-items:center;gap:.6rem;font-weight:600;cursor:pointer}input{width:1.2rem;height:1.2rem}details{margin:.4rem 0 0 1.8rem}summary{cursor:pointer;color:#495347}details p{line-height:1.55}
 button{background:#162f27;color:white;border:0;border-radius:.3rem;padding:.65rem 1rem;cursor:pointer}button:disabled{opacity:.5;cursor:default}.status{min-height:1.5em}
+.param{background:white;border:1px solid #ccc;border-radius:.5rem;padding:.8rem;margin:.7rem 0}.param label{display:block}.param input{display:block;width:100%;height:auto;margin:.45rem 0;padding:.5rem;font:inherit}.param small{display:block;color:#495347;margin-bottom:.5rem}
 </style></head><body>
-<p><a href="/">← 絵とカレンダーへ戻る</a></p><h1>題材と作画テイストの設定</h1>
-<p>題材とテイストをそれぞれ選び、保存してください。表示名と説明は母艦のconfigから読み込みます。保存した選択は次の手動生成と毎時生成から反映され、生成中の絵は変わりません。</p>
+<p><a href="/">← 絵とカレンダーへ戻る</a></p><h1>生成設定</h1>
+<p>題材とテイストの定義は母艦のconfigから画面を開くたびに読み込みます。以下のモデル・画像処理の値はデータベースへ保存します。保存した値は次の手動生成と毎時生成から反映され、進行中の絵や過去の画像は変わりません。</p>
 <form id="topic-form"><fieldset id="topic-choices"><legend>描く題材</legend></fieldset><p id="topic-status" class="status" role="status" aria-live="polite">読込中…</p><button id="topic-save" type="submit" disabled>題材を保存</button></form>
 <form id="style-form"><fieldset id="style-choices"><legend>作画テイスト</legend></fieldset><p id="style-status" class="status" role="status" aria-live="polite">読込中…</p><button id="style-save" type="submit" disabled>テイストを保存</button></form>
+<section id="operational"><h2>モデルと画像処理</h2><p>DBに未保存の項目はconfigの初期値を使います。モデル名はCodex CLIへそのまま渡し、利用できないモデルは生成時にエラーになります。</p>
+<div class="param"><label for="news-model">ニュース調査モデル</label><input id="news-model" autocomplete="off"><small>初期値: gpt-6-luna</small><button type="button" data-setting="news_model">ニュースモデルを保存</button><p id="news-model-status" class="status" role="status" aria-live="polite"></p></div>
+<div class="param"><label for="image-model">作画モデル</label><input id="image-model" autocomplete="off"><small>初期値: gpt-6-luna</small><button type="button" data-setting="image_model">作画モデルを保存</button><p id="image-model-status" class="status" role="status" aria-live="polite"></p></div>
+<div class="param"><label for="dpid-lambda">DPID λ（細部の保持）</label><input id="dpid-lambda" type="number" min="0" max="1" step="any" inputmode="decimal"><small>0〜1。大きいほど細部を残します。初期値: 0.75</small><button type="button" data-setting="dpid_lambda">λを保存</button><p id="dpid-lambda-status" class="status" role="status" aria-live="polite"></p></div>
+<div class="param"><label for="threshold">二値化しきい値</label><input id="threshold" type="number" min="1" max="254" step="1" inputmode="numeric"><small>1〜254の整数。大きいほど黒い画素が増えます。初期値: 128</small><button type="button" data-setting="threshold">しきい値を保存</button><p id="threshold-status" class="status" role="status" aria-live="polite"></p></div>
+<button id="settings-reload" type="button">保存値を再読込</button><p id="settings-status" class="status" role="status" aria-live="polite">読込中…</p></section>
 <script>
 "use strict";
 const $=s=>document.querySelector(s);
@@ -41,4 +48,28 @@ async function saveGroup(kind,event){event.preventDefault();const g=groups[kind]
  catch(e){$(`#${kind}-status`).textContent="保存を確認できませんでした。現在の設定を再読込してください。";$(`#${kind}-save`).disabled=false}
  finally{g.saving=false;if(g.saved===choice)showSelection(kind)}}
 for(const kind of Object.keys(groups)){$(`#${kind}-choices`).addEventListener("change",()=>showSelection(kind));$(`#${kind}-form`).addEventListener("submit",event=>saveGroup(kind,event));loadGroup(kind)}
+const settingFields={news_model:"news-model",image_model:"image-model",dpid_lambda:"dpid-lambda",threshold:"threshold"};
+let settingsRevision=null,savedSettings={},settingsBusy=false;
+function settingValue(key){const raw=$(`#${settingFields[key]}`).value;return key==="dpid_lambda"||key==="threshold"?(raw.trim()===""?NaN:Number(raw)):raw}
+function validSetting(key,value){if(key==="dpid_lambda")return Number.isFinite(value)&&value>=0&&value<=1;
+ if(key==="threshold")return Number.isInteger(value)&&value>=1&&value<=254;
+ return /^[A-Za-z0-9][\x21-\x7e]{0,127}$/.test(value)&&!/[\s]/.test(value)}
+function showSetting(key){const id=settingFields[key],value=settingValue(key),valid=validSetting(key,value),same=String(value)===String(savedSettings[key]);
+ $(`button[data-setting=${key}]`).disabled=settingsBusy||settingsRevision===null||!valid||same;
+ $(`#${id}-status`).textContent=!valid?"入力値を確認してください。":same?"保存済み": "未保存の変更があります。"}
+async function loadSettings(preserveDraft=false){const drafts={};if(preserveDraft)for(const [key,id] of Object.entries(settingFields))drafts[key]={value:$(`#${id}`).value,dirty:String(settingValue(key))!==String(savedSettings[key])};
+ try{const response=await fetch("/v1/settings",{credentials:"same-origin",cache:"no-store"});if(!response.ok)throw Error();const data=await response.json();settingsRevision=data.revision;savedSettings=data.values;
+ for(const [key,id] of Object.entries(settingFields)){$(`#${id}`).value=preserveDraft&&drafts[key].dirty?drafts[key].value:String(data.values[key]);showSetting(key)}
+ $("#settings-status").textContent="現在の保存値を読み込みました。"}catch(e){settingsRevision=null;$("#settings-status").textContent="設定を取得できませんでした。再読込してください。";for(const key of Object.keys(settingFields))showSetting(key)}}
+async function saveSetting(key){if(settingsBusy||settingsRevision===null)return;const value=settingValue(key);if(!validSetting(key,value))return;
+ settingsBusy=true;for(const item of Object.keys(settingFields))showSetting(item);$("#settings-status").textContent="保存中…";
+ try{const response=await fetch("/v1/settings",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json","X-AI-News-Action":"save-setting"},body:JSON.stringify({key,value,revision:settingsRevision})});
+  if(response.status===409){await loadSettings(true);$("#settings-status").textContent="別の画面で設定が変わりました。入力内容を保持して再読込しました。確認して保存してください。";return}
+  if(!response.ok)throw Error();const data=await response.json();settingsRevision=data.revision;savedSettings=data.values;
+  for(const item of Object.keys(settingFields))if(item===key)$(`#${settingFields[item]}`).value=String(data.values[item]);
+  $("#settings-status").textContent="保存しました。次の生成から反映されます。"}
+ catch(e){$("#settings-status").textContent="保存できませんでした。入力値と接続を確認してください。"}
+ finally{settingsBusy=false;for(const item of Object.keys(settingFields))showSetting(item)}}
+for(const [key,id] of Object.entries(settingFields)){$(`#${id}`).addEventListener("input",()=>showSetting(key));$(`button[data-setting=${key}]`).addEventListener("click",()=>saveSetting(key))}
+$("#settings-reload").addEventListener("click",()=>loadSettings());loadSettings();
 </script></body></html>

@@ -14,18 +14,53 @@ FORMAT_ID = "epd122x250-msb-white1-v1"
 ADAPTER_VERSION = 1
 
 
+def require_dpid_backend():
+    """Fail before a generation job spends time creating an unusable image."""
+    try:
+        import numpy as np
+        from pepedpid import dpid_resize
+    except ImportError as exc:
+        raise RuntimeError("DPID requires installed pepedpid and numpy") from exc
+    return np, dpid_resize
+
+
 def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def normalize(source: bytes, threshold: int = 128) -> bytes:
+def normalize(source: bytes, threshold: int = 128, *, method: str = "lanczos",
+              dpid_lambda: float | None = None) -> bytes:
     """Fit without cropping, then produce grayscale, non-interlaced 1-bit PNG."""
-    if not 1 <= threshold <= 254:
+    if type(threshold) is not int or not 1 <= threshold <= 254:
         raise ValueError("threshold out of range")
+    if method not in ("lanczos", "dpid"):
+        raise ValueError("unknown resize method")
     with Image.open(BytesIO(source)) as original:
         original.load()
         canvas = Image.new("L", (WIDTH, HEIGHT), 255)
-        fitted = ImageOps.contain(original.convert("L"), (WIDTH, HEIGHT), Image.Resampling.LANCZOS)
+        gray = original.convert("L")
+        if method == "lanczos":
+            fitted = ImageOps.contain(gray, (WIDTH, HEIGHT), Image.Resampling.LANCZOS)
+        else:
+            from .retry_config import validate_dpid_lambda
+            value = validate_dpid_lambda(dpid_lambda)
+            np, dpid_resize = require_dpid_backend()
+            if gray.width * HEIGHT > gray.height * WIDTH:
+                size = (WIDTH, max(1, round(gray.height * WIDTH / gray.width)))
+            elif gray.width * HEIGHT < gray.height * WIDTH:
+                size = (max(1, round(gray.width * HEIGHT / gray.height)), HEIGHT)
+            else:
+                size = (WIDTH, HEIGHT)
+            # The 0.1.2 wheel panics on H×W×1; repeat the same L pixels into RGB.
+            luminance = np.asarray(gray, dtype=np.float32) / np.float32(255.0)
+            pixels = np.ascontiguousarray(np.repeat(luminance[:, :, None], 3, axis=2))
+            reduced = dpid_resize(pixels, size[1], size[0], value)
+            if (reduced.shape != (size[1], size[0], 3) or not np.isfinite(reduced).all()
+                    or not np.array_equal(reduced[:, :, 0], reduced[:, :, 1])
+                    or not np.array_equal(reduced[:, :, 0], reduced[:, :, 2])):
+                raise RuntimeError("DPID returned invalid grayscale pixels")
+            output = np.rint(np.clip(reduced[:, :, 0], 0, 1) * 255).astype(np.uint8)
+            fitted = Image.fromarray(output, "L")
         canvas.paste(fitted, ((WIDTH - fitted.width) // 2, (HEIGHT - fitted.height) // 2))
         result = canvas.point(lambda n: 255 if n >= threshold else 0, mode="1")
         output = BytesIO()

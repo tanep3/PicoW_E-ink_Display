@@ -6,6 +6,8 @@
 
 ## 母艦と公開
 
+Codexのニュース取得にはニュースモデル、画像生成には画像モデルを使います。初期値は`[news].model`と`[image].model`で、どちらも未設定なら`gpt-6-luna`です。Webで保存した値はSQLiteで項目ごとに優先します。DPID λと二値化閾値も同じ方式です。段階ごとのモデルと変換設定をジョブへ保存し、各CLIの`--model`、プロンプト証拠、公開メタデータへ対応付けます。手動要求では受付時の設定を固定します。利用不可なら失敗し、別モデルへ自動切替しません。新ジョブの正本PNGはDPIDで縦横比を保って250×122以内へサイズ変更し、設定閾値で1bit化します。小さい入力は既存LANCZOS経路と同様に拡大します。旧ジョブはLANCZOS・閾値128で再開します。
+
 - `systemd/ai-news-generate.timer` は `OnCalendar=hourly`、`Persistent=false` です。毎時00分に生成serviceを起動し、停止中の回を後から自動実行しません。serviceは30分で打ち切ります。`Archive` のUTC時間slot一意制約と排他lockで同時実行を防ぎ、処理中断後の同slot再開時は保存済みニュースと消費済み試行回数を使います。完了・失敗確定後の同slot再実行はしません。
 - まず画像バックエンドの利用能力を確認します。1回目のCodex headless `gpt-6-luna` は`[news].selected_topic_id`で選ばれた`[[news.topics]]`の題材をWebで調べ、実際の出典URLと裏付けのある要約または本文だけをJSONで返します。設定がなければ「24時間以内に発表された、注目に値する面白いAIニュース」です。配布設定には初期11候補があり、実configで追加・削除・文言変更ができ、自動ローテーションはありません。題材で指定された時期はCodexの調査判断に委ね、公開日時の出力・コードによる記事の鮮度検算は行いません。出典と文章を検証できなければ再試行し、全試行失敗なら`FAILED`として旧latestを維持します。
 - 公開成功時刻からrolling24時間内に使用した出典URLを`published_frames`と保存フレームのメタデータから取得します。Codexへ除外一覧を渡し、返されたURLもコードで比較します。重複なら理由を渡し、ニュース段階の既定最大3試行内で再選定します。未公開URLは除外しません。同じ話題の別URLは許し、24時間ちょうど経過すれば同じURLも再採用できます。URL比較は既存のURL正規化（ホスト名の小文字化、fragment除去等）に従い、別URLの同一話題推定はしません。
@@ -16,7 +18,7 @@
 - 生成画像をPillowで250×122の1bit PNGに正本化し、物理122×250、stride16、MSB先、白1・黒0、行末padding白のRAW4000へ変換します。PNG、RAW、メタデータを `state/archive/<frame_id>/` に永続保存し、`state/published/latest.json` をatomic writeで切り替えます。フレームJSONにはニュースなら出典URLとニュース文章、カスタムなら入力文章と空の出典URL一覧を残し、共通してジョブ開始時刻、生成時のテイスト、モデル・バックエンド・変換情報を保存します。以前のメタデータを持つ履歴はそのまま閲覧できます。`state/` はGit管理外です。
 - HTTPは `ai-news-http.service` が `192.168.0.120:16150` にbindし、LAN `192.168.0.0/24` の送信元だけを受け付けます。`GET /v1/latest`、`/v1/frames/<frame_id>.raw`、`.png`、`/v1/status`、ギャラリーを配信します。`/v1/status` は `has_frame`、`frame_id`、`server_time` だけを返し、生成ジョブの状態は返しません。手動生成・設定保存以外のPOSTは405です。GETで生成は開始しません。
 - Web手動生成は明示的な`POST /v1/generate`で別プロセスを起動し、`GET /v1/generate/status`で安全な状態だけを返します。本文`{}`は従来のニュース手動生成、`{"custom_text":"..."}`はWeb調査を省くカスタム作画です。ニュースだけにURL除外を適用し、画像再試行・検証・保存・公開・PUSHと生成ロックを共通利用します。手動ジョブは常に負の専用slotを使い、同じ時間の毎時slotを消費しません。別の生成が進行中なら待ち行列には入れません。進行状態は`state/manual_status.json`、最後に受理したカスタム文章1件は`state/last_custom.json`に保存します。GETで生成は開始しません。
-- 設定画面`/settings/`は`GET /v1/topics`と`GET /v1/styles`で、画面を開くたびに実configを読み直します。`POST /v1/topics`と`POST /v1/styles`は両選択IDをそれぞれ独立して原子的に保存します。`config.sample`は初期例です。直接編集した実`config`の候補変更は次回表示と次の手動・毎時ジョブから反映します。実行中ジョブの保存済み指示は変えません。書込みPOSTはLAN制限のほか、正確なHost・Origin、同一originのFetch Metadata、専用ヘッダー、JSON本文を要求します。アプリ認証キーは追加しません。
+- 設定画面`/settings/`は`GET /v1/topics`と`GET /v1/styles`で、画面を開くたびに実configを読み直します。`POST /v1/topics`と`POST /v1/styles`は両選択IDをそれぞれ独立して原子的に保存します。生成4設定は`GET /v1/settings`で実configとDBを統合し、`POST /v1/settings`でrevision付きの項目単位保存をします。競合は409です。`config.sample`は初期例です。直接編集した実`config`の候補変更は次回表示と次の手動・毎時ジョブから反映します。実行中ジョブの保存済み指示・モデル・変換値は変えません。書込みPOSTはLAN制限のほか、正確なHost・Origin、同一originのFetch Metadata、専用ヘッダー、JSON本文を要求します。アプリ認証キーは追加しません。
 - アプリの追加認証キー、HMAC署名、telemetry APIは実装していません。HTTPとSHA-256は通信相手の真正性を保証しません。Picoは受信長・形式・SHA-256・RAW paddingを検証します。母艦はLAN専用の構成ですが、OS firewall等の設定変更は行っていません。
 
 ## Pico Wと表示

@@ -4,6 +4,8 @@
 
 ## 保存先と対応付け
 
+`news-*.json`の`model`はジョブ開始時に固定したニュースモデル、`image-*.json`の`model`は画像モデルに対応します。初期値は実configの`[news].model`と`[image].model`、Webで項目を保存した場合はSQLiteの値です。未指定なら各`gpt-6-luna`です。同じ値を実CLIの`--model`へ渡し、利用不可なら別モデルへ切り替えず失敗します。カスタム作画にはニュース段階の記録はありません。DPID λと閾値はCLIプロンプト証拠ではなくジョブ選択と公開metadata.normalizerに記録します。
+
 `state/prompt_evidence/<slot名>/<news|image>-<1から始まる試行番号>.json`を使う。毎時slotはUTC時間をそのまま、負数の手動slotは`slot-8`のように先頭へ`slot`を付ける。`jobs.sqlite3`の`jobs.slot`、`stage_attempts(slot,stage,attempts)`、公開フレームの`metadata.job_slot`と照合できる。再試行は別ファイルにする。旧形式の負号始まりのフォルダも同一slotの次の試行で改名する。`prompt_evidence`以下はディレクトリ0700、JSONファイル0600で、Web配信もGit管理もしない。既存の`state/`はGit管理外である。
 
 各記録には、`submitted_prompt`全文、`prompt_sha256`、実コマンドの`argv_without_prompt`、`model`、準備日時、slot・stage・attempt、CLI終了コード、終了日時、結果状態、返された成果物の種類とSHA-256を保存する。認証情報と環境変数は収集しない。記録の`argv_without_prompt`の末尾に`submitted_prompt`を加えた配列が、アプリが`subprocess.run()`へ渡した引数配列である。
@@ -22,8 +24,8 @@ python3 -m json.tool state/prompt_evidence/slot-8/image-1.json
 
 ## 証拠の限界
 
-保存するのは**Codex CLIへ渡した初期指示**である。Codexが内部の画像生成ツールへ最終的に渡した別の指示文ではない。現行CLIの`--ephemeral`はセッション履歴を保存しない。[Codex CLI資料](https://learn.chatgpt.com/docs/developer-commands?surface=cli)の`--json`はJSONLイベントを出せるが、画像生成ツールの内部指示文が完全に含まれるとは資料から確認できなかった。今回の実装は`--json`へ切り替えず、未確認の内部指示を実ログとして扱わない。実画像生成やニュース調査を検証のために追加実行していない。
+保存するのは**Codex CLIへ渡した初期指示**である。Codexが内部の画像生成ツールへ最終的に渡した別の指示文ではない。現行CLIの`--ephemeral`はセッション履歴を保存しない。[Codex CLI資料](https://learn.chatgpt.com/docs/developer-commands?surface=cli)の`--json`はJSONLイベントを出せるが、画像生成ツールの内部指示文が完全に含まれるとは資料から確認できなかった。今回の実装は`--json`へ切り替えず、未確認の内部指示を実ログとして扱わない。
 
 ## 確認
 
-模擬Codex呼び出しでニュースと画像の各`submitted_prompt`が実`subprocess.run()`引数の末尾と一致し、slot・stage・試行番号が一致することを確認した。成功、成果物なし、起動エラー、タイムアウト、再試行、突然のプロセス終了、証拠書込み失敗もテストする。後者ではCodexを呼ばない。実運用の最初の証拠は次の通常生成後に確認する。
+模擬Codex呼び出しでニュースと画像の各`submitted_prompt`が実`subprocess.run()`引数の末尾と一致し、slot・stage・試行番号が一致することを確認した。成功、成果物なし、起動エラー、タイムアウト、再試行、突然のプロセス終了、証拠書込み失敗もテストする。後者ではCodexを呼ばない。本番の手動ジョブslot `-24`では`news-1.json`と`image-1.json`がともに`artifact_returned`、CLI終了値0、指定モデル`gpt-6-luna`で記録された。これらは内部画像ツールへ渡された最終指示文の証拠ではない。

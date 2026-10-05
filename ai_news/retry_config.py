@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import re
+import math
 import time
 import tomllib
 
@@ -15,6 +16,32 @@ DEFAULT_STYLE_PROMPT = (
     "新聞の一コマ風刺画。太く抑揚のある黒い輪郭、白地に少数の象徴物、"
     "大きな主役と短い視覚的オチを置く。細かな網点を避け、背景は簡略化する。"
 )
+DEFAULT_CODEX_MODEL = "gpt-6-luna"
+DEFAULT_DPID_LAMBDA = 0.75
+DEFAULT_THRESHOLD = 128
+
+
+def validate_model_id(value: str) -> str:
+    """Validate an opaque CLI model ID without maintaining a model allowlist."""
+    if (not isinstance(value, str) or not 1 <= len(value) <= 128
+            or not value[0].isascii() or not value[0].isalnum()
+            or any(not 33 <= ord(char) <= 126 for char in value)):
+        raise ValueError("model must be a nonempty Codex model ID")
+    return value
+
+
+def validate_dpid_lambda(value: int | float) -> float:
+    """Accept the documented 0..1 detail-preservation interval."""
+    if (type(value) not in (int, float) or not math.isfinite(value)
+            or not 0 <= value <= 1):
+        raise ValueError("image.dpid_lambda must be a finite number from 0 to 1")
+    return float(value)
+
+
+def validate_threshold(value: int) -> int:
+    if type(value) is not int or not 1 <= value <= 254:
+        raise ValueError("image.threshold must be an integer from 1 to 254")
+    return value
 
 
 @dataclass(frozen=True)
@@ -54,6 +81,10 @@ class RetryConfig:
     topics: tuple[Topic, ...] = (DEFAULT_TOPIC,)
     selected_style_id: str = DEFAULT_STYLE.id
     styles: tuple[Style, ...] = (DEFAULT_STYLE,)
+    news_model: str = DEFAULT_CODEX_MODEL
+    image_model: str = DEFAULT_CODEX_MODEL
+    dpid_lambda: float = DEFAULT_DPID_LAMBDA
+    threshold: int = DEFAULT_THRESHOLD
 
     @property
     def topic(self) -> Topic:
@@ -88,7 +119,7 @@ def load_retry_config(path: Path | None = None) -> RetryConfig:
         values = data.get(name, {})
         numeric_fields = {"retry_count", "interval_seconds", "deadline_seconds",
                           "attempt_timeout_seconds"}
-        allowed = numeric_fields | ({"selected_topic_id", "topics"} if name == "news" else set())
+        allowed = numeric_fields | {"model"} | ({"selected_topic_id", "topics"} if name == "news" else {"dpid_lambda", "threshold"})
         if not isinstance(values, dict) or set(values) - allowed:
             raise ValueError("invalid config section [" + name + "]")
         result = {}
@@ -104,6 +135,16 @@ def load_retry_config(path: Path | None = None) -> RetryConfig:
     defaults = RetryConfig()
     news = section("news", defaults.news)
     image = section("image", defaults.image)
+    def model(name: str) -> str:
+        value = data.get(name, {}).get("model", DEFAULT_CODEX_MODEL)
+        try:
+            return validate_model_id(value)
+        except ValueError as exc:
+            raise ValueError(name + ".model must be a nonempty Codex model ID") from exc
+    news_model = model("news")
+    image_model = model("image")
+    dpid_lambda = validate_dpid_lambda(data.get("image", {}).get("dpid_lambda", DEFAULT_DPID_LAMBDA))
+    threshold = validate_threshold(data.get("image", {}).get("threshold", DEFAULT_THRESHOLD))
     values = data.get("news", {})
     selected = values.get("selected_topic_id", defaults.selected_topic_id)
     if not isinstance(selected, str) or not TOPIC_ID.fullmatch(selected):
@@ -156,7 +197,8 @@ def load_retry_config(path: Path | None = None) -> RetryConfig:
             ids.add(ident)
             styles.append(Style(ident, label.strip(), prompt.strip()))
         styles = tuple(styles)
-    return RetryConfig(news, image, selected, topics, selected_style, styles)
+    return RetryConfig(news, image, selected, topics, selected_style, styles,
+                       news_model, image_model, dpid_lambda, threshold)
 
 
 def run_with_retry(operation, policy: RetryPolicy, retryable: tuple[type[Exception], ...],

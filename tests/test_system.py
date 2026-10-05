@@ -73,7 +73,7 @@ class ArchiveTests(unittest.TestCase):
                 output.parent.mkdir(parents=True)
                 output.write_bytes(source_png())
                 Path(command[command.index("--output-last-message") + 1]).write_text(str(output))
-                return types.SimpleNamespace(stderr=b"no tool marker", returncode=1)
+                return types.SimpleNamespace(stderr=b"no tool marker", returncode=0)
 
             with patch.object(generator.shutil, "which", return_value="/usr/bin/codex"), \
                  patch.object(generator.subprocess, "run", side_effect=fake_run):
@@ -395,7 +395,7 @@ class ArchiveTests(unittest.TestCase):
                 commands.append((command, kwargs))
                 Path(command[command.index("--output-last-message") + 1]).write_text(
                     json.dumps(self.NEWS))
-                return types.SimpleNamespace(returncode=1)
+                return types.SimpleNamespace(returncode=0)
             with patch.object(generator.shutil, "which", return_value="/usr/bin/codex"), \
                  patch.object(generator.subprocess, "run", side_effect=fake_run):
                 result = generator.codex_editor(work, datetime(2026, 10, 3, tzinfo=timezone.utc))
@@ -434,7 +434,7 @@ class ArchiveTests(unittest.TestCase):
                     image.putpixel((self.calls, 10), 0)
                     buf = BytesIO(); image.save(buf, "PNG")
                     return buf.getvalue()
-            def editor(work, now, timeout, feedback, *, topic_prompt, excluded_urls, evidence):
+            def editor(work, now, timeout, feedback, *, topic_prompt, excluded_urls, evidence, model):
                 chosen.append((topic_prompt, excluded_urls))
                 return {**self.NEWS, "source_url": "https://example.com/" + str(len(chosen))}
             backend = Backend()

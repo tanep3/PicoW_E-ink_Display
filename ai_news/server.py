@@ -12,10 +12,11 @@ import threading
 import time
 from urllib.parse import parse_qs, urlsplit
 
-from .archive import Archive, FRAME_ID, json_bytes, utcnow
+from .archive import Archive, FRAME_ID, SettingsConflict, json_bytes, utcnow
 from .frame import WIRE_LENGTH
 from .gallery import DEMO_ID, month_view, day_view
 from .manual import ManualManager
+from .retry_config import load_retry_config
 from .push import PushQueue, PushWorker
 from .topics import (CONFIG_PATH, save_selected_style, save_selected_topic,
                      style_snapshot, topic_snapshot)
@@ -174,6 +175,11 @@ class Handler(BaseHTTPRequestHandler):
                 body = style_snapshot(self.server.config_path)
                 self._web_send(200, json_bytes(body), "application/json")
                 return
+            if self.path == "/v1/settings":
+                config = load_retry_config(self.server.config_path)
+                body = self.server.archive.operational_settings(config)
+                self._web_send(200, json_bytes(body), "application/json")
+                return
             if self.path == "/v1/push/status" or self.path.startswith("/v1/push/status?"):
                 url = urlsplit(self.path)
                 if url.query:
@@ -207,7 +213,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(503, b"", "application/json")
 
     def do_POST(self):
-        if self.path not in ("/v1/generate", "/v1/topics", "/v1/styles", "/v1/push"):
+        if self.path not in ("/v1/generate", "/v1/topics", "/v1/styles", "/v1/settings", "/v1/push"):
             self.send_error(405)
             self.close_connection = True
             return
@@ -218,7 +224,8 @@ class Handler(BaseHTTPRequestHandler):
             host, port = self.server.server_address[:2]
             expected = f"{host}:{port}"
             action = {"/v1/generate": "generate", "/v1/topics": "save-topic",
-                      "/v1/styles": "save-style", "/v1/push": "push"}[self.path]
+                      "/v1/styles": "save-style", "/v1/settings": "save-setting",
+                      "/v1/push": "push"}[self.path]
             if (self.headers.get("Host") != expected
                     or self.headers.get("Origin") != "http://" + expected
                     or self.headers.get("X-AI-News-Action") != action
@@ -245,6 +252,14 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("invalid gallery selection")
                 queued = self.server.push_queue.enqueue(body["source_id"])
                 self._web_send(202, json_bytes(queued), "application/json")
+            elif action == "save-setting":
+                if set(body) != {"key", "value", "revision"}:
+                    raise ValueError("invalid setting update")
+                config = load_retry_config(self.server.config_path)
+                self.server.archive.save_operational_setting(body["key"], body["value"],
+                                                             body["revision"])
+                updated = self.server.archive.operational_settings(config)
+                self._web_send(200, json_bytes(updated), "application/json")
             elif action == "save-style":
                 if set(body) != {"style_id"} or not isinstance(body["style_id"], str):
                     raise ValueError("invalid style selection")
@@ -258,6 +273,8 @@ class Handler(BaseHTTPRequestHandler):
                 with self.server.settings_lock:
                     selected = save_selected_topic(body["topic_id"], self.server.config_path)
                 self._web_send(200, json_bytes({"selected_topic_id": selected}), "application/json")
+        except SettingsConflict:
+            self._web_send(409, b'{"state":"settings_changed"}\n', "application/json")
         except (ValueError, IndexError, json.JSONDecodeError):
             self._web_send(400, b'{"state":"invalid_request"}\n', "application/json")
         except (OSError, BlockingIOError):

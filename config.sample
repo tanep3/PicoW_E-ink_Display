@@ -3,6 +3,7 @@
 # Keep IDs unique and save selected_topic_id to choose one topic.
 
 [news]
+model = "gpt-6-luna"
 selected_topic_id = "ai_news"
 retry_count = 2
 interval_seconds = 0
@@ -65,6 +66,9 @@ label = "世界の訪れるべき観光地・絶景地"
 prompt = "世界の訪れるべき観光地や絶景地から、景観や体験に魅力のある場所を1つ選び、名称、所在地、何が特別かを出典付きで要約してください。公式観光案内など現地情報を優先してください。"
 
 [image]
+model = "gpt-6-luna"
+dpid_lambda = 0.75
+threshold = 128
 retry_count = 2
 interval_seconds = 0
 deadline_seconds = 0

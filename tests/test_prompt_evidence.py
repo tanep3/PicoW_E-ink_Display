@@ -210,10 +210,10 @@ class PromptEvidenceTests(unittest.TestCase):
                 return NEWS
 
             class Backend(CodexImageBackend):
-                def probe(self):
+                def probe(self, *, model=None):
                     return {"backend": "codex-headless-imagegen"}
 
-                def generate(self, news, work, *, feedback, timeout, style_prompt, evidence):
+                def generate(self, news, work, *, feedback, timeout, style_prompt, evidence, model=None):
                     targets.append(evidence)
                     return png_bytes()
 

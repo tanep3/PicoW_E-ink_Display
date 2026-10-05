@@ -13,6 +13,12 @@ import sqlite3
 import tempfile
 
 from .frame import ADAPTER_VERSION, FORMAT_ID, WIRE_LENGTH, png_to_wire, sha256
+from .retry_config import (DEFAULT_CODEX_MODEL, DEFAULT_THRESHOLD,
+                           validate_dpid_lambda, validate_model_id, validate_threshold)
+
+
+class SettingsConflict(Exception):
+    """A settings form was saved after this view was loaded."""
 
 FRAME_ID = re.compile(r"^[0-9a-f]{64}-a1$")
 
@@ -75,11 +81,29 @@ class Archive:
                 CREATE TABLE IF NOT EXISTS job_selections (
                   slot INTEGER PRIMARY KEY, topic_id TEXT NOT NULL, topic_label TEXT NOT NULL,
                   topic_prompt TEXT NOT NULL, style_id TEXT NOT NULL,
-                  style_label TEXT NOT NULL, style_prompt TEXT NOT NULL);
+                  style_label TEXT NOT NULL, style_prompt TEXT NOT NULL,
+                  news_model TEXT NOT NULL DEFAULT 'gpt-6-luna',
+                  image_model TEXT NOT NULL DEFAULT 'gpt-6-luna',
+                  resize_method TEXT NOT NULL DEFAULT 'lanczos',
+                  dpid_lambda REAL,
+                  threshold INTEGER NOT NULL DEFAULT 128);
+                CREATE TABLE IF NOT EXISTS operational_settings (
+                  id INTEGER PRIMARY KEY CHECK(id = 1), revision INTEGER NOT NULL,
+                  news_model TEXT, image_model TEXT, dpid_lambda REAL, threshold INTEGER);
                 CREATE TABLE IF NOT EXISTS telemetry (
                   device_id TEXT NOT NULL, request_id TEXT NOT NULL, received_at TEXT NOT NULL,
                   payload TEXT NOT NULL, PRIMARY KEY(device_id, request_id));
             """)
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(job_selections)")}
+            for name in ("news_model", "image_model"):
+                if name not in columns:
+                    conn.execute("ALTER TABLE job_selections ADD COLUMN " + name
+                                 + " TEXT NOT NULL DEFAULT 'gpt-6-luna'")
+            additions = {"resize_method": "TEXT NOT NULL DEFAULT 'lanczos'",
+                         "dpid_lambda": "REAL", "threshold": "INTEGER NOT NULL DEFAULT 128"}
+            for name, declaration in additions.items():
+                if name not in columns:
+                    conn.execute("ALTER TABLE job_selections ADD COLUMN " + name + " " + declaration)
         self.reconcile_latest()
 
     def reconcile_latest(self):
@@ -133,6 +157,42 @@ class Archive:
         finally:
             conn.close()
 
+    def operational_settings(self, config) -> dict:
+        """Per-key DB overrides; null columns retain the current config initial value."""
+        with self.connect() as conn:
+            row = conn.execute("SELECT revision,news_model,image_model,dpid_lambda,threshold "
+                               "FROM operational_settings WHERE id=1").fetchone()
+        names = ("news_model", "image_model", "dpid_lambda", "threshold")
+        overrides = dict(zip(names, row[1:])) if row else {}
+        values = {name: overrides.get(name) if overrides.get(name) is not None
+                  else getattr(config, name) for name in names}
+        values["news_model"] = validate_model_id(values["news_model"])
+        values["image_model"] = validate_model_id(values["image_model"])
+        values["dpid_lambda"] = validate_dpid_lambda(values["dpid_lambda"])
+        values["threshold"] = validate_threshold(values["threshold"])
+        return {"revision": row[0] if row else 0, "values": values,
+                "source": {name: "database" if overrides.get(name) is not None else "config"
+                           for name in names}}
+
+    def save_operational_setting(self, key: str, value, revision: int) -> int:
+        validators = {"news_model": validate_model_id, "image_model": validate_model_id,
+                      "dpid_lambda": validate_dpid_lambda, "threshold": validate_threshold}
+        if (not isinstance(key, str) or key not in validators
+                or type(revision) is not int or revision < 0):
+            raise ValueError("invalid settings update")
+        value = validators[key](value)
+        with self.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT revision FROM operational_settings WHERE id=1").fetchone()
+            current = row[0] if row else 0
+            if revision != current:
+                raise SettingsConflict("settings changed; reload before saving")
+            if row is None:
+                conn.execute("INSERT INTO operational_settings(id,revision) VALUES(1,0)")
+            conn.execute("UPDATE operational_settings SET " + key + "=?,revision=? WHERE id=1",
+                         (value, current + 1))
+            return current + 1
+
     @contextmanager
     def lock(self, *, blocking=True):
         with open(self.root / ".generator.lock", "a+b") as stream:
@@ -159,15 +219,31 @@ class Archive:
                     "COLLECTING", "SELECTED", "GENERATING", "VALIDATED"):
                 return False
             if selection is not None:
-                fields = ("topic_id", "topic_label", "topic_prompt", "style_id",
-                          "style_label", "style_prompt")
-                if set(selection) != set(fields) or any(
+                legacy_fields = ("topic_id", "topic_label", "topic_prompt", "style_id",
+                                 "style_label", "style_prompt")
+                model_fields = legacy_fields + ("news_model", "image_model")
+                fields = model_fields + ("resize_method", "dpid_lambda", "threshold")
+                if set(selection) not in (set(legacy_fields), set(model_fields), set(fields)) or any(
                         not isinstance(selection[field], str) or not selection[field]
-                        for field in fields):
+                        for field in legacy_fields):
                     raise ValueError("invalid job selection snapshot")
+                selection = {**selection,
+                             "news_model": validate_model_id(selection.get("news_model", DEFAULT_CODEX_MODEL)),
+                             "image_model": validate_model_id(selection.get("image_model", DEFAULT_CODEX_MODEL))}
+                selection.setdefault("resize_method", "lanczos")
+                selection.setdefault("dpid_lambda", None)
+                selection.setdefault("threshold", DEFAULT_THRESHOLD)
+                if selection["resize_method"] not in ("lanczos", "dpid"):
+                    raise ValueError("invalid job resize method")
+                if selection["resize_method"] == "dpid":
+                    selection["dpid_lambda"] = validate_dpid_lambda(selection["dpid_lambda"])
+                elif selection["dpid_lambda"] is not None:
+                    raise ValueError("legacy Lanczos job cannot have DPID lambda")
+                selection["threshold"] = validate_threshold(selection["threshold"])
                 conn.execute("""INSERT OR IGNORE INTO job_selections
-                    (slot,topic_id,topic_label,topic_prompt,style_id,style_label,style_prompt)
-                    VALUES(?,?,?,?,?,?,?)""", (slot,) + tuple(selection[field] for field in fields))
+                    (slot,topic_id,topic_label,topic_prompt,style_id,style_label,style_prompt,
+                     news_model,image_model,resize_method,dpid_lambda,threshold)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""", (slot,) + tuple(selection[field] for field in fields))
             cursor = conn.execute("INSERT OR IGNORE INTO jobs(slot,state,updated_at) VALUES(?,?,?)",
                                   (slot, "COLLECTING", utcnow()))
             if cursor.rowcount == 1:
@@ -177,7 +253,8 @@ class Archive:
 
     def job_selection(self, slot: int) -> dict | None:
         fields = ("topic_id", "topic_label", "topic_prompt", "style_id",
-                  "style_label", "style_prompt")
+                  "style_label", "style_prompt", "news_model", "image_model",
+                  "resize_method", "dpid_lambda", "threshold")
         with self.connect() as conn:
             row = conn.execute("SELECT " + ",".join(fields) +
                                " FROM job_selections WHERE slot=?", (slot,)).fetchone()

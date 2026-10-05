@@ -76,6 +76,7 @@ class ManualManager:
                     current["state"] == "invalid_topic" and custom_text is None):
                 return current, False
             config = load_retry_config(self.config_path)
+            settings = self.archive.operational_settings(config)["values"]
             style = config.style
             if custom_text is None:
                 topic = config.topic
@@ -85,7 +86,12 @@ class ManualManager:
                 selection = {"topic_id": CUSTOM_TOPIC_ID, "topic_label": "カスタム文章",
                              "topic_prompt": "ユーザー入力の文章から作画"}
             selection.update(style_id=style.id, style_label=style.label,
-                             style_prompt=style.prompt)
+                             style_prompt=style.prompt,
+                             news_model=settings["news_model"],
+                             image_model=settings["image_model"],
+                             resize_method="dpid",
+                             dpid_lambda=settings["dpid_lambda"],
+                             threshold=settings["threshold"])
             try:
                 with self.archive.lock(blocking=False):
                     pass

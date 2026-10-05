@@ -53,13 +53,15 @@ PICO_PORT=/dev/ttyACM0
 
 ## 依存と単体テスト
 
-Python 3.11以降とPillowが必要です。依存は `requirements.txt` を参照してください。リポジトリ直下から次を実行します。
+Python 3.11以降とPillow・NumPy・pepedpidが必要です。Pico転送スクリプトとそのテストにはpyserialも必要です。依存は `requirements.txt` を参照してください。リポジトリ直下から次を実行します。
 
 ```bash
 python3 -m unittest discover -s tests -v
 ```
 
 ## 母艦の設定と能力確認
+
+ニュース調査モデルはルート`config`の`[news].model`、描画モデルは`[image].model`を初期値にします。未設定の旧configではどちらも`gpt-6-luna`です。Webで保存したモデル値は項目ごとにSQLiteで優先します。固定のモデル一覧へ制限せず、指定IDをそのままCodex CLIへ渡します。CLIが利用できなければ該当段階を失敗させ、別モデルへ自動切替しません。Webで題材やテイストを保存してもモデル設定は保持されます。モデルIDはジョブ開始時に題材・テイストとともに固定され、手動要求では受付時の値を子プロセスへ渡します。公開メタデータと各段階の`prompt_evidence`で実際の指定モデルを確認できます。DPID λと二値化閾値の初期値も`[image]`にあり、Web保存後の優先関係は同じです。操作と旧ジョブの扱いは[生成設定](GENERATION_SETTINGS_2026-10-05.md)を参照してください。
 
 母艦は `AI_NEWS_STATE` に履歴・DBを保存し、`AI_NEWS_BIND` と `AI_NEWS_PORT` でHTTPのbind先を決めます。既定は `192.168.0.120:16150` です。起動前に既存リスナー、停止中のunit、Nginx設定も確認して競合を避けます。8080は使用しません。
 
@@ -81,7 +83,7 @@ Webの「題材とテイストを選ぶ」画面は、`config`の`[[news.topics]
 
 `python3 -m ai_news.server` は保存済み画像だけを配信します。GETで生成はしません。配信 `/v1/latest`、不変RAW/PNG、status、閲覧画面 `/` と `/gallery/` は同じ設定ポートです。閲覧とPico取得に追加のアプリ認証はありません。
 
-user unitテンプレートは `systemd/` にあります。HTTP serviceと生成timerはこのraspi5の開発パスと状態ディレクトリで導入済みです。`systemctl --user status ai-news-http.service ai-news-generate.timer` と `systemctl --user list-timers ai-news-generate.timer` で状態を確認できます。timerは毎時00分、`Persistent=false` です。生成サービスは30分の起動期限、各UTC時間スロットの記録、排他ロックを備えます。調査と画像の各段階は、必要な成果物がない場合に既定で最大2回再試行します。実際の定時結果は `journalctl --user -u ai-news-generate.service` と `state/jobs.sqlite3` で確認します。
+user unitテンプレートは `systemd/` にあります。HTTP serviceと生成timerはこのraspi5の開発パスと状態ディレクトリで導入済みです。2026-10-05の更新で両serviceの`ExecStart`を同じ`<checkout>/.venv/bin/python`へ切り替え、Web手動生成の子プロセスもそのPythonを継承します。`systemctl --user status ai-news-http.service ai-news-generate.timer` と `systemctl --user list-timers ai-news-generate.timer` で状態を確認できます。timerは毎時00分、`Persistent=false` です。生成サービスは30分の起動期限、各UTC時間スロットの記録、排他ロックを備えます。調査と画像の各段階は、必要な成果物がない場合に既定で最大2回再試行します。実際の定時結果は `journalctl --user -u ai-news-generate.service` と `state/jobs.sqlite3` で確認します。
 
 ## Webからの手動生成
 
