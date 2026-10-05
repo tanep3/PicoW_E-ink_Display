@@ -51,6 +51,7 @@ class Archive:
         (self.root / "archive").mkdir(exist_ok=True)
         (self.root / "published").mkdir(exist_ok=True)
         (self.root / "news").mkdir(exist_ok=True)
+        (self.root / "custom").mkdir(exist_ok=True)
         self.db = self.root / "jobs.sqlite3"
         with self.connect() as conn:
             conn.executescript("""
@@ -187,6 +188,19 @@ class Archive:
     def load_news(self, slot: int) -> dict | None:
         path = self.root / "news" / (str(slot) + ".json")
         return json.loads(path.read_bytes()) if path.exists() else None
+
+    def save_custom(self, slot: int, text: str) -> None:
+        path = self.root / "custom" / (str(slot) + ".json")
+        data = json_bytes({"custom_text": text})
+        if path.exists():
+            if path.read_bytes() != data:
+                raise ValueError("saved custom text differs from current input")
+            return
+        atomic_write(path, data)
+
+    def load_custom(self, slot: int) -> str | None:
+        path = self.root / "custom" / (str(slot) + ".json")
+        return json.loads(path.read_bytes())["custom_text"] if path.exists() else None
 
     def attempt_info(self, slot: int, stage: str) -> tuple[int, str]:
         if stage not in ("news", "image"):

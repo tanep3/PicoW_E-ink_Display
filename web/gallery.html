@@ -15,10 +15,16 @@ button:disabled{opacity:.55;cursor:wait}.actions{display:flex;align-items:center
 .entries{display:grid;gap:1rem;margin:1rem 0}.entry{background:white;border:1px solid #ccc;border-radius:.5rem;padding:1rem}
 .entry img{width:min(100%,750px);aspect-ratio:250/122;object-fit:contain;image-rendering:pixelated;border:1px solid #ddd}
 .entry time{display:block;margin:.4rem 0}.entry a{overflow-wrap:anywhere}.hidden{display:none}#message{min-height:1.5em}
+.settings-summary,.custom-entry{background:white;border:1px solid #ccc;border-radius:.5rem;padding:1rem;margin:1rem 0}
+.settings-summary h2,.custom-entry h2{margin-top:0}.prompt-text{white-space:pre-wrap;overflow-wrap:anywhere;margin:.3rem 0 1rem}
+textarea{display:block;width:100%;min-height:7rem;padding:.6rem;font:inherit;resize:vertical;border:1px solid #767a72;border-radius:.3rem}
+textarea:focus-visible{outline:3px solid #1761ad}.used-settings{margin:.7rem 0}.used-settings summary{cursor:pointer}
 @media(max-width:650px){.calendar{gap:.1rem}.day{min-height:86px;overflow:hidden}.day img{display:block;width:100%;max-height:28px}.day small{font-size:.65rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
 </style></head><body>
 <h1>AIニュース風刺画アーカイブ</h1><p>日本時間の日付から、保存された絵を探せます。</p>
 <div class="actions"><button id="generate" class="primary" type="button">新しい絵を生成</button><a href="/settings/">題材とテイストを選ぶ</a><span id="generation-status" role="status" aria-live="polite"></span></div>
+<section class="settings-summary" aria-labelledby="current-settings-heading"><h2 id="current-settings-heading">現在の設定（次の生成に適用）</h2><p id="current-topic">情報取得プロンプトを読込中…</p><p id="current-topic-prompt" class="prompt-text"></p><p id="current-style">作画テイストを読込中…</p><p id="current-style-prompt" class="prompt-text"></p></section>
+<section class="custom-entry" aria-labelledby="custom-heading"><h2 id="custom-heading">文章から直接作画</h2><label for="custom-text">作画に使う文章</label><textarea id="custom-text" maxlength="4000" placeholder="描いてほしい内容を入力してください"></textarea><p>ニュース調査は行いません。送信を受け付けた最新の文章を次回の入力欄に戻します。作品ごとの文章は画像履歴でコピーできます。</p><button id="generate-custom" class="primary" type="button">この文章で作画</button></section>
 <p>生成には数分かかる場合があります。公開後にPicoへ送信し、表示結果を別に確認します。</p><p id="push-status" role="status" aria-live="polite"></p>
 <section class="latest" aria-label="最新の絵"><h2>最新の絵</h2><p id="latest-message">読込中…</p><img id="latest-image" alt="最新の絵" class="hidden"></section>
 <nav class="toolbar" aria-label="月の移動"><button id="prev" type="button">前の月</button><strong id="month"></strong><button id="next" type="button">次の月</button></nav>
@@ -44,8 +50,11 @@ async function showDay(day,scroll=true){selectedDay=day;$("#detail").classList.r
  for(const item of data.images){const card=document.createElement("article");card.className="entry";const h=document.createElement("h3");h.textContent=item.title;card.append(h);if(item.is_demo){const label=document.createElement("strong");label.textContent="検証用・本番未公開";card.append(label)}
  const t=document.createElement("time");t.dateTime=item.jst_at;t.textContent="生成: "+item.jst_at.replace("T"," ").slice(0,19)+" JST";card.append(t);
  const img=document.createElement("img");img.src=item.image_url;img.alt=item.title;img.loading="lazy";card.append(img);
- const p=document.createElement("p");if(item.source_urls.length){p.append("出典: ");for(const url of item.source_urls){const a=document.createElement("a");a.href=url;a.target="_blank";a.rel="noopener noreferrer";a.textContent=url;p.append(a,document.createTextNode(" "))}}else p.textContent="出典: 未登録";
- card.append(p);const pushButton=document.createElement("button"),pushMessage=document.createElement("span");pushButton.type="button";pushButton.textContent="PICOに表示";pushButton.addEventListener("click",()=>pushFrame(item.frame_id,pushButton,pushMessage));card.append(pushButton,pushMessage);$("#entries").append(card)}}catch(e){$("#entries").textContent=e.message}if(scroll)$("#detail").scrollIntoView({behavior:"smooth",block:"start"})}
+ if(item.input_kind==="custom"){const label=document.createElement("label"),copy=document.createElement("textarea");label.textContent="作画に使ったカスタム文章（選択してコピーできます）";copy.readOnly=true;copy.value=item.custom_text??"";card.append(label,copy)}
+ else{const p=document.createElement("p");if(item.source_urls.length){p.append("出典: ");for(const url of item.source_urls){const a=document.createElement("a");a.href=url;a.target="_blank";a.rel="noopener noreferrer";a.textContent=url;p.append(a,document.createTextNode(" "))}}else p.textContent="出典: 未登録";card.append(p)}
+ if(item.used_topic_prompt||item.used_style_prompt){const details=document.createElement("details");details.className="used-settings";const summary=document.createElement("summary");summary.textContent="この作品の生成時に使った設定";details.append(summary);
+ for(const [label,value] of [["情報取得プロンプト",item.used_topic_prompt],["作画テイスト",item.used_style_prompt]]){if(!value)continue;const p=document.createElement("p");p.textContent=label+"："+value;details.append(p)}card.append(details)}
+ const pushButton=document.createElement("button"),pushMessage=document.createElement("span");pushButton.type="button";pushButton.textContent="PICOに表示";pushButton.addEventListener("click",()=>pushFrame(item.frame_id,pushButton,pushMessage));card.append(pushButton,pushMessage);$("#entries").append(card)}}catch(e){$("#entries").textContent=e.message}if(scroll)$("#detail").scrollIntoView({behavior:"smooth",block:"start"})}
 async function pushFrame(sourceId,button,message){button.disabled=true;message.textContent=" 送信を予約しています…";
  try{const r=await fetch("/v1/push",{method:"POST",credentials:"same-origin",cache:"no-store",headers:{"Content-Type":"application/json","X-AI-News-Action":"push"},body:JSON.stringify({source_id:sourceId})});
  if(r.status!==202)throw Error("request failed");const job=await r.json();watchedPush.set(job.seq,{button,message});await pushStatus()}
@@ -57,16 +66,28 @@ async function pushStatus(){try{const job=await get("/v1/push/status");$("#push-
  for(const [seq,view] of watchedPush){const own=job.seq===seq?job:await get("/v1/push/status?seq="+seq);view.message.textContent=" "+pushLabel(own);if(["displayed","failed","superseded"].includes(own.state)){view.button.disabled=false;watchedPush.delete(seq)}}}
  catch(e){$("#push-status").textContent="Picoへの送信状態を取得できませんでした。"}}
 async function showLatest(){try{const data=await get("/v1/latest"),img=$("#latest-image");img.src="/v1/frames/"+data.frame_id+".png";img.classList.remove("hidden");$("#latest-message").textContent="公開番号 "+data.publish_seq}catch(e){$("#latest-message").textContent="公開済みの絵はまだありません。"}}
+async function loadCurrentSettings(){try{const [topics,styles]=await Promise.all([get("/v1/topics"),get("/v1/styles")]);
+ const topic=topics.topics.find(x=>x.id===topics.selected_topic_id),style=styles.styles.find(x=>x.id===styles.selected_style_id);
+ $("#current-topic").textContent=topic?"現在の情報取得設定: "+topic.label:"情報取得設定の選択が無効です。";
+ $("#current-topic-prompt").textContent=topic?.prompt??"";
+ $("#current-style").textContent=style?"現在の作画テイスト: "+style.label:"作画テイストの選択が無効です。";
+ $("#current-style-prompt").textContent=style?.prompt??""}
+ catch(e){$("#current-topic").textContent="現在の設定を取得できませんでした。";$("#current-style").textContent=""}}
+let customTouched=false;
+async function loadLastCustom(){try{const data=await get("/v1/generate/custom-text");if(!customTouched)$("#custom-text").value=data.custom_text??""}
+ catch(e){$("#generation-status").textContent="前回のカスタム文章を復元できませんでした。"}}
 async function refreshAfterGeneration(){const day=selectedDay;await showLatest();await showMonth();if(day)await showDay(day,false);await pushStatus()}
-async function generationStatus(){try{const data=await get("/v1/generate/status"),state=data.state;$("#generate").disabled=["running","busy","invalid_topic","invalid_style","invalid_config"].includes(state);
+async function generationStatus(){try{const data=await get("/v1/generate/status"),state=data.state,busy=["running","busy"].includes(state);$("#generate").disabled=busy||["invalid_topic","invalid_style","invalid_config"].includes(state);$("#generate-custom").disabled=busy||["invalid_style","invalid_config"].includes(state);
  const labels={idle:"",running:"生成中です。画面を閉じても処理は続きます。",busy:"別の生成が進行中です。",succeeded:"新しい絵を公開しました。",unchanged:"生成しましたが、最新画像は変わりませんでした。",failed:"生成に失敗しました。前の絵を保持しています。",invalid_topic:"選択中の題材が削除されています。設定画面で選び直してください。",invalid_style:"選択中のテイストが削除されています。設定画面で選び直してください。",invalid_config:"configを読み込めません。母艦の設定を確認してください。"};
- $("#generation-status").textContent=labels[state]??"状態を確認できません。";
+ $("#generation-status").textContent=(data.kind==="custom"&&state==="running"?"カスタム文章から作画中です。画面を閉じても処理は続きます。":labels[state])??"状態を確認できません。";
  if((state==="succeeded"||state==="unchanged")&&data.run_id&&data.run_id!==seenRun){seenRun=data.run_id;await refreshAfterGeneration()}
- }catch(e){$("#generation-status").textContent="生成状態を取得できませんでした。";$("#generate").disabled=false}}
-async function startGeneration(){const button=$("#generate");button.disabled=true;$("#generation-status").textContent="開始しています…";
- try{const response=await fetch("/v1/generate",{method:"POST",credentials:"same-origin",cache:"no-store",headers:{"Content-Type":"application/json","X-AI-News-Action":"generate"},body:"{}"});
+ }catch(e){$("#generation-status").textContent="生成状態を取得できませんでした。";$("#generate").disabled=false;$("#generate-custom").disabled=false}}
+async function startGeneration(custom=false){const button=$(custom?"#generate-custom":"#generate"),customText=$("#custom-text").value;
+ if(custom&&!customText.trim()){$("#generation-status").textContent="作画する文章を入力してください。";$("#custom-text").focus();return}
+ button.disabled=true;$("#generation-status").textContent="開始しています…";
+ try{const response=await fetch("/v1/generate",{method:"POST",credentials:"same-origin",cache:"no-store",headers:{"Content-Type":"application/json","X-AI-News-Action":"generate"},body:JSON.stringify(custom?{custom_text:customText}:{})});
  if(response.status!==202&&response.status!==409)throw Error("request failed");await generationStatus()}
  catch(e){$("#generation-status").textContent="開始できませんでした。しばらくしてから再試行してください。";button.disabled=false}}
 function move(n){month+=n;if(month<1){month=12;year--}else if(month>12){month=1;year++}selectedDay=null;showMonth()}
-$("#prev").addEventListener("click",()=>move(-1));$("#next").addEventListener("click",()=>move(1));$("#generate").addEventListener("click",startGeneration);showMonth();showLatest();generationStatus();pushStatus();setInterval(generationStatus,5000);setInterval(pushStatus,5000);
+$("#prev").addEventListener("click",()=>move(-1));$("#next").addEventListener("click",()=>move(1));$("#generate").addEventListener("click",()=>startGeneration());$("#generate-custom").addEventListener("click",()=>startGeneration(true));$("#custom-text").addEventListener("input",()=>{customTouched=true});showMonth();showLatest();loadCurrentSettings();loadLastCustom();generationStatus();pushStatus();setInterval(generationStatus,5000);setInterval(pushStatus,5000);setInterval(loadCurrentSettings,30000);window.addEventListener("focus",loadCurrentSettings);
 </script></body></html>

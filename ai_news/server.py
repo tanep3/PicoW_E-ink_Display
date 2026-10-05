@@ -162,6 +162,10 @@ class Handler(BaseHTTPRequestHandler):
                         status = {"state": "busy"}
                 self._web_send(200, json_bytes(status), "application/json")
                 return
+            if self.path == "/v1/generate/custom-text":
+                self._web_send(200, json_bytes(self.server.manual.last_custom()),
+                               "application/json")
+                return
             if self.path == "/v1/topics":
                 body = topic_snapshot(self.server.config_path)
                 self._web_send(200, json_bytes(body), "application/json")
@@ -224,16 +228,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._web_send(403, b'{"state":"forbidden"}\n', "application/json")
                 return
             size = int(self.headers.get("Content-Length", "-1"))
-            if not 0 < size <= 256:
+            if not 0 < size <= (32768 if action == "generate" else 256):
                 raise ValueError("invalid body length")
             self.connection.settimeout(5)
             body = json.loads(self.rfile.read(size).decode("utf-8"))
             if not isinstance(body, dict):
                 raise ValueError("invalid body")
             if action == "generate":
-                if body:
+                if body and (set(body) != {"custom_text"}
+                             or not isinstance(body["custom_text"], str)):
                     raise ValueError("unexpected request fields")
-                status, started = self.server.manual.start()
+                status, started = self.server.manual.start(body.get("custom_text"))
                 self._web_send(202 if started else 409, json_bytes(status), "application/json")
             elif action == "push":
                 if set(body) != {"source_id"} or not isinstance(body["source_id"], str):

@@ -68,6 +68,10 @@ def _entry(payload, image_url, is_demo):
     sources = meta.get("source_urls") or []
     if not isinstance(sources, list):
         sources = []
+    kind = ("demo" if is_demo else meta.get("input_kind")
+            if meta.get("input_kind") in ("news", "custom") else
+            "news" if sources else "legacy")
+    custom_text = meta.get("custom_text")
     return {
         "frame_id": payload["frame_id"],
         "created_at": created.isoformat(),
@@ -75,6 +79,12 @@ def _entry(payload, image_url, is_demo):
         "day": created.astimezone(JST).date().isoformat(),
         "title": str(meta.get("title") or meta.get("fact_summary") or "見出し未登録")[:200],
         "source_urls": [url for item in sources if (url := _safe_url(item))][:10],
+        "input_kind": kind,
+        "custom_text": custom_text if kind == "custom" and isinstance(custom_text, str) else None,
+        "used_topic_label": meta.get("topic_label") if isinstance(meta.get("topic_label"), str) else None,
+        "used_topic_prompt": meta.get("topic_prompt") if kind == "news" and isinstance(meta.get("topic_prompt"), str) else None,
+        "used_style_label": meta.get("style_label") if isinstance(meta.get("style_label"), str) else None,
+        "used_style_prompt": meta.get("style_prompt") if isinstance(meta.get("style_prompt"), str) else None,
         "image_url": image_url,
         "is_demo": is_demo,
     }
