@@ -190,16 +190,24 @@ class Archive:
         return json.loads(path.read_bytes()) if path.exists() else None
 
     def save_custom(self, slot: int, text: str) -> None:
-        path = self.root / "custom" / (str(slot) + ".json")
+        path = self.root / "custom" / ("slot" + str(slot) + ".json")
+        legacy = self.root / "custom" / (str(slot) + ".json")
         data = json_bytes({"custom_text": text})
-        if path.exists():
-            if path.read_bytes() != data:
+        for existing in (path, legacy):
+            if existing.exists() and existing.read_bytes() != data:
                 raise ValueError("saved custom text differs from current input")
+        if path.exists():
+            legacy.unlink(missing_ok=True)
+            return
+        if legacy.exists():
+            os.replace(legacy, path)
             return
         atomic_write(path, data)
 
     def load_custom(self, slot: int) -> str | None:
-        path = self.root / "custom" / (str(slot) + ".json")
+        path = self.root / "custom" / ("slot" + str(slot) + ".json")
+        if not path.exists():
+            path = self.root / "custom" / (str(slot) + ".json")
         return json.loads(path.read_bytes())["custom_text"] if path.exists() else None
 
     def attempt_info(self, slot: int, stage: str) -> tuple[int, str]:

@@ -16,7 +16,7 @@ from unittest.mock import patch
 from PIL import Image, ImageDraw
 
 from ai_news import gallery, generator, manual
-from ai_news.archive import Archive
+from ai_news.archive import Archive, json_bytes
 from ai_news.prompt_evidence import PromptTarget
 from ai_news.retry_config import RetryConfig, Topic
 from ai_news.server import FrameServer
@@ -35,6 +35,34 @@ def picture():
 
 
 class CustomGenerationTests(unittest.TestCase):
+    def test_custom_slot_files_have_command_friendly_names(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Archive(Path(tmp))
+            archive.save_custom(-1, TEXT)
+            self.assertTrue((Path(tmp) / "custom/slot-1.json").is_file())
+            self.assertFalse((Path(tmp) / "custom/-1.json").exists())
+            self.assertEqual(TEXT, archive.load_custom(-1))
+
+    def test_legacy_custom_slot_file_is_read_and_migrated(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Archive(Path(tmp))
+            legacy = Path(tmp) / "custom/-1.json"
+            legacy.write_bytes(json_bytes({"custom_text": TEXT}))
+            self.assertEqual(TEXT, archive.load_custom(-1))
+            archive.save_custom(-1, TEXT)
+            self.assertFalse(legacy.exists())
+            self.assertEqual(TEXT, archive.load_custom(-1))
+            self.assertTrue((Path(tmp) / "custom/slot-1.json").is_file())
+
+    def test_legacy_custom_slot_file_must_match_retry_input(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Archive(Path(tmp))
+            legacy = Path(tmp) / "custom/-1.json"
+            legacy.write_bytes(json_bytes({"custom_text": "different"}))
+            with self.assertRaisesRegex(ValueError, "saved custom text differs"):
+                archive.save_custom(-1, TEXT)
+            self.assertTrue(legacy.is_file())
+
     def test_user_topic_named_custom_remains_news(self):
         class Backend:
             def probe(self):
