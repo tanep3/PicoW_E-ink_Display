@@ -4,7 +4,7 @@
 
 ## 保存先と対応付け
 
-`state/prompt_evidence/<job_slot>/<news|image>-<1から始まる試行番号>.json`を使う。毎時slotはUTC時間、手動slotは負数。`jobs.sqlite3`の`jobs.slot`、`stage_attempts(slot,stage,attempts)`、公開フレームの`metadata.job_slot`と照合できる。再試行は別ファイルにする。`prompt_evidence`以下はディレクトリ0700、JSONファイル0600で、Web配信もGit管理もしない。既存の`state/`はGit管理外である。
+`state/prompt_evidence/<slot名>/<news|image>-<1から始まる試行番号>.json`を使う。毎時slotはUTC時間をそのまま、負数の手動slotは`slot-8`のように先頭へ`slot`を付ける。`jobs.sqlite3`の`jobs.slot`、`stage_attempts(slot,stage,attempts)`、公開フレームの`metadata.job_slot`と照合できる。再試行は別ファイルにする。旧形式の負号始まりのフォルダも同一slotの次の試行で改名する。`prompt_evidence`以下はディレクトリ0700、JSONファイル0600で、Web配信もGit管理もしない。既存の`state/`はGit管理外である。
 
 各記録には、`submitted_prompt`全文、`prompt_sha256`、実コマンドの`argv_without_prompt`、`model`、準備日時、slot・stage・attempt、CLI終了コード、終了日時、結果状態、返された成果物の種類とSHA-256を保存する。認証情報と環境変数は収集しない。記録の`argv_without_prompt`の末尾に`submitted_prompt`を加えた配列が、アプリが`subprocess.run()`へ渡した引数配列である。
 
@@ -15,7 +15,7 @@
 例として、手動ジョブslot `-8`の画像初回の証拠は次で確認できる。
 
 ```bash
-python3 -m json.tool state/prompt_evidence/-8/image-1.json
+python3 -m json.tool state/prompt_evidence/slot-8/image-1.json
 ```
 
 このJSONには出典と要約が含まれ得るため、内容をWeb、Git、公開ログへ載せない。画像生成の画風確認には`submitted_prompt`と`model`、`status`、`artifact_sha256`を見て、公開作品の`metadata.job_slot`やPNGハッシュと照合する。画像正本化でPNGのバイト列が変わる場合、返却画像のハッシュと公開PNGのハッシュは一致しなくてもよい。

@@ -49,7 +49,7 @@ class PromptEvidenceTests(unittest.TestCase):
                     work, datetime(2026, 10, 4, tzinfo=timezone.utc),
                     topic_prompt="example topic", evidence=PromptTarget(root, -8, "news", 1)))
 
-            path = root / "prompt_evidence/-8/news-1.json"
+            path = root / "prompt_evidence/slot-8/news-1.json"
             record = json.loads(path.read_text())
             self.assertEqual(captured[0][-1], record["submitted_prompt"])
             self.assertEqual(captured[0][:-1], record["argv_without_prompt"])
@@ -87,7 +87,7 @@ class PromptEvidenceTests(unittest.TestCase):
                     NEWS, work, style_prompt="original shadow style",
                     evidence=PromptTarget(root, -8, "image", 1))
             self.assertEqual(image, output)
-            record = json.loads((root / "prompt_evidence/-8/image-1.json").read_text())
+            record = json.loads((root / "prompt_evidence/slot-8/image-1.json").read_text())
             self.assertEqual(captured[0][-1], record["submitted_prompt"])
             self.assertEqual(captured[0][:-1], record["argv_without_prompt"])
             self.assertIn("original shadow style", record["submitted_prompt"])
@@ -188,7 +188,7 @@ class PromptEvidenceTests(unittest.TestCase):
             with self.assertRaises(KeyboardInterrupt):
                 with PromptEvidence(target, command):
                     raise KeyboardInterrupt()
-            path = Path(tmp) / "prompt_evidence/-9/image-3.json"
+            path = Path(tmp) / "prompt_evidence/slot-9/image-3.json"
             original = path.read_bytes()
             record = json.loads(original)
             self.assertEqual("interrupted", record["status"])

@@ -149,11 +149,11 @@ class CustomGenerationTests(unittest.TestCase):
                 self.assertEqual(picture(), backend.generate(
                     {"custom_text": TEXT}, work, style_prompt="one selected style",
                     evidence=PromptTarget(root, -1, "image", 1)))
-            evidence = json.loads((root / "prompt_evidence/-1/image-1.json").read_text())
+            evidence = json.loads((root / "prompt_evidence/slot-1/image-1.json").read_text())
             self.assertEqual("artifact_returned", evidence["status"])
             self.assertIn(json.dumps(TEXT, ensure_ascii=False),
                           evidence["submitted_prompt"])
-            self.assertFalse((root / "prompt_evidence/-1/news-1.json").exists())
+            self.assertFalse((root / "prompt_evidence/slot-1/news-1.json").exists())
 
     def test_manual_acceptance_snapshots_style_and_only_latest_custom_text(self):
         with tempfile.TemporaryDirectory() as tmp:

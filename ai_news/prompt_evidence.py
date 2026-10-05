@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import subprocess
 
-from .archive import atomic_write
+from .archive import atomic_write, slot_storage_name
 
 
 def _utcnow() -> str:
@@ -43,8 +43,10 @@ class PromptEvidence:
         prompt = command[-1]
         if not prompt:
             raise ValueError("Codex prompt missing")
-        self.path = Path(target.root) / "prompt_evidence" / str(target.slot) / (
+        self.path = Path(target.root) / "prompt_evidence" / slot_storage_name(target.slot) / (
             f"{target.stage}-{target.attempt}.json")
+        self.legacy_dir = (Path(target.root) / "prompt_evidence" / str(target.slot)
+                           if target.slot < 0 else None)
         self.record = {
             "schema_version": 1,
             "slot": target.slot,
@@ -70,11 +72,21 @@ class PromptEvidence:
 
     def __enter__(self):
         private_root = self.path.parent.parent
-        for directory in (private_root, self.path.parent):
-            if directory.is_symlink():
-                raise ValueError("prompt evidence directory is a symlink")
-            directory.mkdir(mode=0o700, exist_ok=True)
-            os.chmod(directory, 0o700)
+        if private_root.is_symlink():
+            raise ValueError("prompt evidence directory is a symlink")
+        private_root.mkdir(mode=0o700, exist_ok=True)
+        os.chmod(private_root, 0o700)
+        if self.legacy_dir is not None:
+            if self.legacy_dir.is_symlink():
+                raise ValueError("legacy prompt evidence directory is a symlink")
+            if self.legacy_dir.exists():
+                if not self.legacy_dir.is_dir() or self.path.parent.exists():
+                    raise FileExistsError("conflicting prompt evidence directories")
+                os.replace(self.legacy_dir, self.path.parent)
+        if self.path.parent.is_symlink():
+            raise ValueError("prompt evidence directory is a symlink")
+        self.path.parent.mkdir(mode=0o700, exist_ok=True)
+        os.chmod(self.path.parent, 0o700)
         if self.path.exists() or self.path.is_symlink():
             raise FileExistsError("prompt evidence for this attempt already exists")
         self._write()

@@ -44,6 +44,13 @@ def json_bytes(value: dict) -> bytes:
     return (json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode()
 
 
+def slot_storage_name(slot: int) -> str:
+    """Keep manual (negative) job slots usable as plain shell path arguments."""
+    if type(slot) is not int:
+        raise ValueError("invalid job slot")
+    return "slot" + str(slot) if slot < 0 else str(slot)
+
+
 class Archive:
     def __init__(self, root: Path):
         self.root = Path(root)
@@ -177,16 +184,26 @@ class Archive:
         return dict(zip(fields, row)) if row else None
 
     def save_news(self, slot: int, news: dict) -> None:
-        path = self.root / "news" / (str(slot) + ".json")
+        path = self.root / "news" / (slot_storage_name(slot) + ".json")
+        legacy = self.root / "news" / (str(slot) + ".json")
         data = json_bytes(news)
+        if legacy != path and legacy.exists() and legacy.read_bytes() != data:
+            raise ValueError("saved news differs from current selection")
         if path.exists():
             if path.read_bytes() != data:
                 raise ValueError("saved news differs from current selection")
+            if legacy != path:
+                legacy.unlink(missing_ok=True)
+            return
+        if legacy != path and legacy.exists():
+            os.replace(legacy, path)
             return
         atomic_write(path, data)
 
     def load_news(self, slot: int) -> dict | None:
-        path = self.root / "news" / (str(slot) + ".json")
+        path = self.root / "news" / (slot_storage_name(slot) + ".json")
+        if not path.exists():
+            path = self.root / "news" / (str(slot) + ".json")
         return json.loads(path.read_bytes()) if path.exists() else None
 
     def save_custom(self, slot: int, text: str) -> None:

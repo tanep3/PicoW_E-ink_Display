@@ -25,6 +25,6 @@
 
 ## 本番での単発作画確認（2026-10-05）
 
-Webと同じ保護ヘッダーを付け、`月面の喫茶店で、ロボットがコーヒーを淹れる一コマ。窓の向こうには地球が見える。`を`POST /v1/generate`へ1回送信した。`run_id=e85b7843e4bc24c0cfb85644`、最終状態`succeeded`。保存slotは`-10`、`state/prompt_evidence/-10/image-1.json`の状態は`artifact_returned`、モデルは`gpt-6-luna`、CLI終了値は0。保存された実入力には指定した文章と選択中の画風指示の両方が含まれる。ニュース調査JSONは作られず、公開メタデータの`input_kind=custom`、`source_urls=[]`、画風ID`toriyama_adventure`を確認した。
+Webと同じ保護ヘッダーを付け、`月面の喫茶店で、ロボットがコーヒーを淹れる一コマ。窓の向こうには地球が見える。`を`POST /v1/generate`へ1回送信した。`run_id=e85b7843e4bc24c0cfb85644`、最終状態`succeeded`。保存slotは`-10`、`state/prompt_evidence/slot-10/image-1.json`の状態は`artifact_returned`、モデルは`gpt-6-luna`、CLI終了値は0。保存された実入力には指定した文章と選択中の画風指示の両方が含まれる。ニュース調査JSONは作られず、公開メタデータの`input_kind=custom`、`source_urls=[]`、画風ID`toriyama_adventure`を確認した。
 
 公開フレームは`88ca2564d2ebaf1f08107c04f6a8e278d4cc7aac7a9e3dd615ba818c7b1c0940-a1`、`publish_seq=43`。PNGは250×122・1bit、RAWは4000バイトで、manifestのハッシュと実ファイルが一致する。`GET /v1/generate/custom-text`から最後の文章を復元でき、同日の日別履歴にも掲載された。PicoへのPUSHは1回の試行で`displayed` ACKを記録した。ACKは通信上の描画完了報告であり、今回のPico画面を人が目視した記録ではない。画像は月面の喫茶店、ロボット、地球を描いているが、顔立ちとメカの細部が狙った画風に十分一致するかは主観評価が残る。
